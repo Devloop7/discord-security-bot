@@ -22,6 +22,7 @@ const modules = [
   require('./src/protection/antinuke'),
   require('./src/protection/webhooks'),
   require('./src/protection/antibot'),
+  require('./src/protection/antiraid'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { console.error('[load]', e.message); }
