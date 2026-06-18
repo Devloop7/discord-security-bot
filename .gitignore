@@ -1,0 +1,20 @@
+# Secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+
+# Runtime data (strikes, backups, etc.)
+data/
+*.log
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
