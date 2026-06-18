@@ -8,6 +8,7 @@ function register(client) {
   client.on(Events.GuildMemberAdd, async (member) => {
     try {
       if (!member.user.bot) return;
+      if (member.id === client.user.id) return; // never act on ourselves
       const r = await fetchExecutor(member.guild, AuditLogEvent.BotAdd, member.id);
       const adder = r?.executorId ? await member.guild.members.fetch(r.executorId).catch(() => null) : null;
       if (adder && isTrusted(adder)) return; // trusted user added it → allow
