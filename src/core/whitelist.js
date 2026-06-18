@@ -12,6 +12,7 @@ function isTrusted(member) {
 // LINK permission: trusted roles or allowed channels may post links.
 function canPostLinks(member, channelId) {
   if (config.link.allowedChannels.includes(channelId)) return true;
+  if (!member) return false;
   return member.roles.cache.some((r) => config.link.allowedRoles.includes(r.id));
 }
 

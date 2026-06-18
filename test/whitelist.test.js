@@ -29,3 +29,8 @@ test('canPostLinks: allowed role or allowed channel passes', () => {
   assert.strictEqual(canPostLinks(fakeMember('a', 'z', []), 'link-channel'), true);
   assert.strictEqual(canPostLinks(fakeMember('a', 'z', []), 'normal'), false);
 });
+
+test('canPostLinks: null member is not allowed (secure default)', () => {
+  assert.strictEqual(canPostLinks(null, 'normal'), false);
+  assert.strictEqual(canPostLinks(null, 'link-channel'), true); // allowed channel still bypasses
+});
