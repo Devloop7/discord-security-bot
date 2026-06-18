@@ -9,7 +9,7 @@ High-protection moderation bot: anti-link, anti-profanity, anti-spam, anti-nuke,
 4. Install: `npm install`
 5. Edit `config.js` — fill in `guildId`, `modLogChannelId`, `trustedUsers` (your user ID), and any allowed link roles/channels.
 6. Invite the bot (replace IDs):
-   `https://discord.com/oauth2/authorize?client_id=1517206448424091738&scope=bot+applications.commands&permissions=1101927988310`
+   `https://discord.com/oauth2/authorize?client_id=1517206448424091738&scope=bot+applications.commands&permissions=1100316945558`
    Permissions cover: Manage Roles/Channels/Messages/Webhooks, Kick, Ban, Timeout, View Audit Log.
 7. **Drag the bot's role near the TOP** of Server Settings → Roles (it can only act on roles below its own).
 8. Register slash commands: `npm run register`
