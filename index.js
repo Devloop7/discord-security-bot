@@ -16,7 +16,7 @@ const client = new Client({
 
 // Protection + command modules are registered here as later phases add them.
 const modules = [
-  // require('./src/protection/profanity'),
+  require('./src/protection/profanity'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { console.error('[load]', e.message); }
