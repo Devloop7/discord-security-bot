@@ -20,6 +20,8 @@ const modules = [
   require('./src/protection/links'),
   require('./src/protection/spam'),
   require('./src/protection/antinuke'),
+  require('./src/protection/webhooks'),
+  require('./src/protection/antibot'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { console.error('[load]', e.message); }
