@@ -1,0 +1,17 @@
+{
+  "name": "discord-security-bot",
+  "version": "1.0.0",
+  "description": "High-protection Discord security bot",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test",
+    "register": "node src/commands/register.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  }
+}
