@@ -19,6 +19,7 @@ const modules = [
   require('./src/protection/profanity'),
   require('./src/protection/links'),
   require('./src/protection/spam'),
+  require('./src/protection/antinuke'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { console.error('[load]', e.message); }
