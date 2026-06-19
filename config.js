@@ -1,6 +1,7 @@
 // config.js — every threshold, list, and ID lives here. Edit this file to tune the bot.
 module.exports = {
-  guildId: "",            // your server ID (right-click server icon → Copy Server ID)
+  // Your server ID. You can also set GUILD_ID in .env (which takes precedence).
+  guildId: "",
   modLogChannelId: "",    // channel where the bot reports every action
   alertRoleId: "",        // role pinged on nuke/raid/critical events (optional)
   // ANTI-NUKE allowlist. You can also set OWNER_IDS in .env (comma-separated) — both are merged.

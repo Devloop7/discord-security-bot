@@ -1,5 +1,6 @@
 // index.js
 require('dotenv').config();
+const env = require('./src/core/env');
 const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
 const logger = require('./src/core/logger');
 
@@ -38,4 +39,4 @@ client.once(Events.ClientReady, (c) => {
 process.on('unhandledRejection', (e) => logger.error('[unhandledRejection]', e));
 process.on('uncaughtException', (e) => logger.error('[uncaughtException]', e));
 
-client.login(process.env.BOT_TOKEN);
+client.login(env.token);
