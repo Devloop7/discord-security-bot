@@ -34,15 +34,17 @@ for (const mod of modules) {
 }
 
 client.once(Events.ClientReady, async (c) => {
-  logger.info(`✅ Logged in as ${c.user.tag}. Guarding ${c.guilds.cache.size} server(s).`);
+  // Use warn level for startup confirmations so they're visible even in
+  // production (LOG_LEVEL=warn), where info logs are suppressed.
+  logger.warn(`✅ Logged in as ${c.user.tag}. Guarding ${c.guilds.cache.size} server(s).`);
   // Auto-register slash commands on startup so hosts that only run `npm start`
   // (e.g. Railway) still get commands registered — no manual step needed.
   try {
     const r = await registerCommands();
     if (r.scope === 'global') {
-      logger.info(`✅ Auto-registered ${r.count} global slash commands.`);
+      logger.warn(`✅ Auto-registered ${r.count} global slash commands (may take ~1h to appear).`);
     } else {
-      logger.info(`✅ Auto-registered ${r.count} slash commands to guild ${r.guildId}.`);
+      logger.warn(`✅ Auto-registered ${r.count} slash commands to guild ${r.guildId}.`);
     }
   } catch (e) {
     logger.error('[auto-register] failed:', e.message || e);
