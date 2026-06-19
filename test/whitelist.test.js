@@ -1,6 +1,7 @@
 // test/whitelist.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
+process.env.OWNER_IDS = 'env-owner-id';
 
 // Stub config before requiring the module under test.
 const Module = require('node:module');
@@ -33,4 +34,8 @@ test('canPostLinks: allowed role or allowed channel passes', () => {
 test('canPostLinks: null member is not allowed (secure default)', () => {
   assert.strictEqual(canPostLinks(null, 'normal'), false);
   assert.strictEqual(canPostLinks(null, 'link-channel'), true); // allowed channel still bypasses
+});
+
+test('isTrusted: OWNER_IDS env users are trusted', () => {
+  assert.strictEqual(isTrusted(fakeMember('env-owner-id', 'someone-else')), true);
 });

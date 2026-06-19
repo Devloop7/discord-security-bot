@@ -3,6 +3,7 @@ module.exports = {
   guildId: "",            // your server ID (right-click server icon → Copy Server ID)
   modLogChannelId: "",    // channel where the bot reports every action
   alertRoleId: "",        // role pinged on nuke/raid/critical events (optional)
+  // ANTI-NUKE allowlist. You can also set OWNER_IDS in .env (comma-separated) — both are merged.
   trustedUsers: [],       // ANTI-NUKE allowlist: explicit user IDs (you + co-owner) ONLY
 
   link: {

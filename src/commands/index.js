@@ -10,6 +10,9 @@ const commandModules = [
   require('./kick'),
   require('./mute'),
   require('./warn'),
+  require('./note'),
+  require('./warnings'),
+  require('./clearwarnings'),
 ];
 
 const commands = new Collection();

@@ -1,6 +1,7 @@
 // index.js
 require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
+const logger = require('./src/core/logger');
 
 const client = new Client({
   intents: [
@@ -26,15 +27,15 @@ const modules = [
   require('./src/commands'),
 ];
 for (const mod of modules) {
-  try { mod.register(client); } catch (e) { console.error('[load]', e.message); }
+  try { mod.register(client); } catch (e) { logger.error('[load]', e.message); }
 }
 
 client.once(Events.ClientReady, (c) => {
-  console.log(`✅ Logged in as ${c.user.tag}. Guarding ${c.guilds.cache.size} server(s).`);
+  logger.info(`✅ Logged in as ${c.user.tag}. Guarding ${c.guilds.cache.size} server(s).`);
 });
 
 // Global safety nets so one bad event never crashes the bot.
-process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e));
-process.on('uncaughtException', (e) => console.error('[uncaughtException]', e));
+process.on('unhandledRejection', (e) => logger.error('[unhandledRejection]', e));
+process.on('uncaughtException', (e) => logger.error('[uncaughtException]', e));
 
 client.login(process.env.BOT_TOKEN);
