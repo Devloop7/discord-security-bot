@@ -1,24 +1,19 @@
-// src/commands/register.js — run: npm run register
+// src/commands/register.js — run manually: npm run register
+// (The bot also auto-registers on startup; this CLI is for one-off use.)
 require('dotenv').config();
-const { REST, Routes } = require('discord.js');
-const env = require('../core/env');
-const { commandModules } = require('./index');
+const { registerCommands } = require('./registerCommands');
 const logger = require('../core/logger');
-
-const body = commandModules.map((c) => c.data.toJSON());
-const rest = new REST({ version: '10' }).setToken(env.token);
 
 (async () => {
   try {
-    if (env.multiGuild) {
-      await rest.put(Routes.applicationCommands(env.clientId), { body });
-      logger.info(`✅ Registered ${body.length} GLOBAL commands (every server; may take ~1h to appear).`);
+    const r = await registerCommands();
+    if (r.scope === 'global') {
+      logger.info(`✅ Registered ${r.count} GLOBAL commands (every server; may take ~1h to appear).`);
     } else {
-      await rest.put(Routes.applicationGuildCommands(env.clientId, env.guildId), { body });
-      logger.info(`✅ Registered ${body.length} commands to guild ${env.guildId}.`);
+      logger.info(`✅ Registered ${r.count} commands to guild ${r.guildId}.`);
     }
   } catch (err) {
-    logger.error('Registration failed:', err);
+    logger.error('Registration failed:', err.message || err);
     process.exit(1);
   }
 })();

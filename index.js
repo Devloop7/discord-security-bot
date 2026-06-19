@@ -3,6 +3,7 @@ require('dotenv').config();
 const env = require('./src/core/env');
 const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
 const logger = require('./src/core/logger');
+const { registerCommands } = require('./src/commands/registerCommands');
 
 const client = new Client({
   intents: [
@@ -32,8 +33,20 @@ for (const mod of modules) {
   try { mod.register(client); } catch (e) { logger.error('[load]', e.message); }
 }
 
-client.once(Events.ClientReady, (c) => {
+client.once(Events.ClientReady, async (c) => {
   logger.info(`✅ Logged in as ${c.user.tag}. Guarding ${c.guilds.cache.size} server(s).`);
+  // Auto-register slash commands on startup so hosts that only run `npm start`
+  // (e.g. Railway) still get commands registered — no manual step needed.
+  try {
+    const r = await registerCommands();
+    if (r.scope === 'global') {
+      logger.info(`✅ Auto-registered ${r.count} global slash commands.`);
+    } else {
+      logger.info(`✅ Auto-registered ${r.count} slash commands to guild ${r.guildId}.`);
+    }
+  } catch (e) {
+    logger.error('[auto-register] failed:', e.message || e);
+  }
 });
 
 // Global safety nets so one bad event never crashes the bot.
