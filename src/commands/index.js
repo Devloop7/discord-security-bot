@@ -14,6 +14,7 @@ const commandModules = [
   require('./note'),
   require('./warnings'),
   require('./clearwarnings'),
+  require('./ticket'),
 ];
 
 const commands = new Collection();
@@ -30,7 +31,7 @@ function register(client) {
     const cmd = commands.get(interaction.commandName);
     if (!cmd) return;
     try {
-      if (!isMod(interaction.member)) {
+      if (!cmd.bypassModGate && !isMod(interaction.member)) {
         return interaction.reply({ content: '⛔ You are not allowed to use this.', flags: MessageFlags.Ephemeral });
       }
       await cmd.execute(interaction);
