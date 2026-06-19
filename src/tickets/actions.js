@@ -509,12 +509,11 @@ async function close(interaction, reason) {
         .setColor(COLORS.closed)
         .setFooter({ text: `Ticket ID: ${channelId}` });
       await opener.send({ embeds: [dmEmbed] });
+      await require('./feedback').sendSurvey(opener, guildId, channelId);
     } catch {
       // DMs may be disabled — silently ignore.
     }
   }
-
-  // FEEDBACK_SURVEY_HOOK
 
   const ticketNum = ticket.number || channel.name;
   await logTicketEvent(guild, 'close', {

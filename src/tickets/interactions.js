@@ -13,6 +13,7 @@ const {
 
 const { getTicket } = require('../core/ticketStore');
 const { canCloseTicket } = require('./permissions');
+const feedback = require('./feedback');
 
 const { getConfig, openCount } = require('../core/ticketStore');
 const actions = require('./actions');
@@ -58,7 +59,8 @@ function register(client) {
     const isTicketModal =
       interaction.isModalSubmit() &&
       (interaction.customId === 'create_ticket_modal' ||
-        interaction.customId === 'ticket_close_modal');
+        interaction.customId === 'ticket_close_modal' ||
+        interaction.customId.startsWith('ticket_feedback_comment_modal'));
 
     if (!isTicketButton && !isTicketModal) return;
 
@@ -159,8 +161,18 @@ function register(client) {
           case 'ticket_delete':
             return actions.deleteTicket(interaction);
 
+          case 'ticket_feedback':
+            // args: [guildId, channelId, n]
+            return feedback.submitRating(interaction, args[0], args[1], Number(args[2]));
+
+          case 'ticket_feedback_comment':
+            // args: [guildId, channelId]
+            return feedback.openCommentModal(interaction, args[0], args[1]);
+
+          case 'ticket_feedback_decline':
+            return feedback.declineFeedback(interaction);
+
           default:
-            // ticket_feedback* — handled by Chunk 5; ignore here.
             return;
         }
       }
@@ -174,6 +186,15 @@ function register(client) {
 
       if (interaction.isModalSubmit() && interaction.customId === 'create_ticket_modal') {
         return actions.openTicket(interaction);
+      }
+
+      if (
+        interaction.isModalSubmit() &&
+        interaction.customId.startsWith('ticket_feedback_comment_modal')
+      ) {
+        // customId format: ticket_feedback_comment_modal:guildId:channelId
+        const parts = interaction.customId.split(':');
+        return feedback.saveComment(interaction, parts[1], parts[2]);
       }
     } catch (e) {
       logger.error('[ticket:interaction]', e.message);

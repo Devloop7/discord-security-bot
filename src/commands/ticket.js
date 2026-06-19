@@ -1,13 +1,13 @@
-// src/commands/ticket.js — /ticket setup | config
+// src/commands/ticket.js — /ticket setup | config | close | claim | priority
 // bypassModGate = true: the dispatcher (wired in Chunk 5) skips the global isMod gate
-// for this command; permission is enforced here instead.
+// for this command; permission is enforced here instead (per subcommand).
 const {
   SlashCommandBuilder,
   PermissionFlagsBits,
   ChannelType,
   MessageFlags,
 } = require('discord.js');
-const { getConfig, setConfig } = require('../core/ticketStore');
+const { getConfig, setConfig, getTicket } = require('../core/ticketStore');
 const { postPanel, buildPanelEmbed } = require('../tickets/panel');
 const { panelComponents } = require('../tickets/constants');
 const logger = require('../core/logger');
@@ -134,10 +134,81 @@ const data = new SlashCommandBuilder()
       .addBooleanOption((o) =>
         o.setName('enable_priority').setDescription('Show priority buttons on tickets'),
       ),
+  )
+  // ── close ────────────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('close')
+      .setDescription('Close the current ticket channel')
+      .addStringOption((o) =>
+        o.setName('reason').setDescription('Reason for closing (optional)'),
+      ),
+  )
+  // ── claim ────────────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('claim')
+      .setDescription('Claim this ticket as yours to handle'),
+  )
+  // ── priority ─────────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('priority')
+      .setDescription('Set the priority level for this ticket')
+      .addStringOption((o) =>
+        o
+          .setName('level')
+          .setDescription('Priority level')
+          .setRequired(true)
+          .addChoices(
+            { name: 'Urgent', value: 'urgent' },
+            { name: 'High',   value: 'high'   },
+            { name: 'Medium', value: 'medium' },
+            { name: 'Low',    value: 'low'    },
+            { name: 'None',   value: 'none'   },
+          ),
+      ),
   );
 
 async function execute(interaction) {
-  // Permission gate — ManageGuild OR ManageChannels required.
+  const sub = interaction.options.getSubcommand();
+
+  // close / claim / priority — must be inside a ticket channel; actions enforce own perms.
+  if (sub === 'close' || sub === 'claim' || sub === 'priority') {
+    const ticket = getTicket(interaction.channelId);
+    if (!ticket) {
+      return interaction.reply({
+        content: '⚠️ Use this inside a ticket channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    const actions = require('../tickets/actions');
+    try {
+      if (sub === 'close') {
+        const reason =
+          interaction.options.getString('reason') ||
+          'Closed via command without a specific reason.';
+        return await actions.close(interaction, reason);
+      }
+      if (sub === 'claim')    return await actions.claim(interaction);
+      if (sub === 'priority') return await actions.setPriority(interaction, interaction.options.getString('level'));
+    } catch (err) {
+      logger.error('[ticket:command]', err.message);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction
+          .reply({ content: '⚠️ Ticket command failed.', flags: MessageFlags.Ephemeral })
+          .catch(() => {});
+      } else {
+        await interaction
+          .followUp({ content: '⚠️ Ticket command failed.', flags: MessageFlags.Ephemeral })
+          .catch(() => {});
+      }
+    }
+    return;
+  }
+
+  // setup / config — ManageGuild OR ManageChannels required.
   const { member } = interaction;
   const hasPerms =
     member.permissions.has(PermissionFlagsBits.ManageGuild) ||
@@ -149,8 +220,6 @@ async function execute(interaction) {
       flags: MessageFlags.Ephemeral,
     });
   }
-
-  const sub = interaction.options.getSubcommand();
 
   try {
     if (sub === 'setup') return await handleSetup(interaction);

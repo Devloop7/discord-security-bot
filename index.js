@@ -26,6 +26,7 @@ const modules = [
   require('./src/protection/antibot'),
   require('./src/protection/antiraid'),
   require('./src/commands'),
+  require('./src/tickets/interactions'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { logger.error('[load]', e.message); }

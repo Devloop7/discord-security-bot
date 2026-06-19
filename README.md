@@ -9,8 +9,8 @@ High-protection moderation bot: anti-link, anti-profanity, anti-spam, anti-nuke,
 4. Install: `npm install`
 5. Edit `config.js` and/or `.env` — set `GUILD_ID` in `.env` (takes precedence) or fill in `guildId` in `config.js`. Also fill in `modLogChannelId`, `trustedUsers` (your user ID), and any allowed link roles/channels.
 6. Invite the bot (replace IDs):
-   `https://discord.com/oauth2/authorize?client_id=1517206448424091738&scope=bot+applications.commands&permissions=1100316945558`
-   Permissions cover: Manage Roles/Channels/Messages/Webhooks, Kick, Ban, Timeout, View Audit Log.
+   `https://discord.com/oauth2/authorize?client_id=1517206448424091738&scope=bot+applications.commands&permissions=1100317060246`
+   Permissions cover: Manage Roles/Channels/Messages/Webhooks, Kick, Ban, Timeout, View Audit Log, Embed Links, Attach Files, Read Message History.
 7. **Drag the bot's role near the TOP** of Server Settings → Roles (it can only act on roles below its own).
 8. Register slash commands: `npm run register`
 9. Start: `npm start`
@@ -35,3 +35,15 @@ Everything (thresholds, word list, whitelists) is in `config.js`, `src/data/badw
 | `LOG_TO_FILE` | No | `true` writes all logs to `logs/bot.log` (useful when hosted 24/7). Default off. |
 
 This bot also still accepts the older names `BOT_TOKEN` and `APP_ID`. All other variables seen in `.env.example` (PostgreSQL, web server, Sentry, backups) are inert placeholders included only to mirror TitanBot — they have no effect.
+
+## Ticket system
+
+Run `/ticket setup` to post the ticket panel in a channel and configure the system (staff role, log channel, transcript channel, etc.). Use `/ticket config` at any time to update individual settings without re-posting the panel.
+
+Members open tickets by clicking the **Create Ticket** button on the panel. A private channel is created for them and any staff with the configured role.
+
+Staff use the in-ticket action buttons (Claim, Pin, Close, priority shortcuts) or the slash commands `/ticket close [reason]`, `/ticket claim`, and `/ticket priority <level>` from inside a ticket channel.
+
+When a ticket is closed, a DM is sent to the opener (if `dm_on_close` is enabled) followed immediately by a star-rating survey. The opener can tap a star (1–5), add a written comment, or dismiss the survey. Feedback is logged to the configured log channel.
+
+When a ticket is deleted, an HTML transcript is generated and posted to the configured transcript channel.
