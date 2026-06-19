@@ -1,0 +1,338 @@
+// src/commands/ticket.js — /ticket setup | config
+// bypassModGate = true: the dispatcher (wired in Chunk 5) skips the global isMod gate
+// for this command; permission is enforced here instead.
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  ChannelType,
+  MessageFlags,
+} = require('discord.js');
+const { getConfig, setConfig } = require('../core/ticketStore');
+const { postPanel, buildPanelEmbed } = require('../tickets/panel');
+const { panelComponents } = require('../tickets/constants');
+const logger = require('../core/logger');
+
+const data = new SlashCommandBuilder()
+  .setName('ticket')
+  .setDescription('Ticket system configuration')
+  // ── setup ────────────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('setup')
+      .setDescription('Initial ticket system setup — posts the panel')
+      .addChannelOption((o) =>
+        o
+          .setName('panel_channel')
+          .setDescription('Channel where the ticket panel will be posted')
+          .addChannelTypes(ChannelType.GuildText)
+          .setRequired(true),
+      )
+      .addStringOption((o) =>
+        o
+          .setName('panel_message')
+          .setDescription('Message shown on the ticket panel embed')
+          .setRequired(true),
+      )
+      .addStringOption((o) =>
+        o.setName('button_label').setDescription('Label for the Create Ticket button'),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('category')
+          .setDescription('Category for open ticket channels')
+          .addChannelTypes(ChannelType.GuildCategory),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('closed_category')
+          .setDescription('Category for closed ticket channels')
+          .addChannelTypes(ChannelType.GuildCategory),
+      )
+      .addRoleOption((o) =>
+        o.setName('staff_role').setDescription('Role that can manage tickets'),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('log_channel')
+          .setDescription('Channel for ticket event logs')
+          .addChannelTypes(ChannelType.GuildText),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('transcript_channel')
+          .setDescription('Channel where transcripts are posted after deletion')
+          .addChannelTypes(ChannelType.GuildText),
+      )
+      .addIntegerOption((o) =>
+        o
+          .setName('max_tickets')
+          .setDescription('Max open tickets per user (1-10, default 3)')
+          .setMinValue(1)
+          .setMaxValue(10),
+      )
+      .addBooleanOption((o) =>
+        o.setName('dm_on_close').setDescription('DM user when their ticket is closed'),
+      )
+      .addBooleanOption((o) =>
+        o.setName('enable_priority').setDescription('Show priority buttons on tickets'),
+      ),
+  )
+  // ── config ───────────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('config')
+      .setDescription('Update ticket system settings (all options optional)')
+      .addChannelOption((o) =>
+        o
+          .setName('panel_channel')
+          .setDescription('Move panel to a different channel')
+          .addChannelTypes(ChannelType.GuildText),
+      )
+      .addStringOption((o) =>
+        o.setName('panel_message').setDescription('Update the panel embed message'),
+      )
+      .addStringOption((o) =>
+        o.setName('button_label').setDescription('Update the Create Ticket button label'),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('category')
+          .setDescription('Category for open ticket channels')
+          .addChannelTypes(ChannelType.GuildCategory),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('closed_category')
+          .setDescription('Category for closed ticket channels')
+          .addChannelTypes(ChannelType.GuildCategory),
+      )
+      .addRoleOption((o) =>
+        o.setName('staff_role').setDescription('Role that can manage tickets'),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('log_channel')
+          .setDescription('Channel for ticket event logs')
+          .addChannelTypes(ChannelType.GuildText),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('transcript_channel')
+          .setDescription('Channel where transcripts are posted after deletion')
+          .addChannelTypes(ChannelType.GuildText),
+      )
+      .addIntegerOption((o) =>
+        o
+          .setName('max_tickets')
+          .setDescription('Max open tickets per user (1-10)')
+          .setMinValue(1)
+          .setMaxValue(10),
+      )
+      .addBooleanOption((o) =>
+        o.setName('dm_on_close').setDescription('DM user when their ticket is closed'),
+      )
+      .addBooleanOption((o) =>
+        o.setName('enable_priority').setDescription('Show priority buttons on tickets'),
+      ),
+  );
+
+async function execute(interaction) {
+  // Permission gate — ManageGuild OR ManageChannels required.
+  const { member } = interaction;
+  const hasPerms =
+    member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+    member.permissions.has(PermissionFlagsBits.ManageChannels);
+
+  if (!hasPerms) {
+    return interaction.reply({
+      content: '⛔ You need Manage Server to configure tickets.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const sub = interaction.options.getSubcommand();
+
+  try {
+    if (sub === 'setup') return await handleSetup(interaction);
+    if (sub === 'config') return await handleConfig(interaction);
+  } catch (err) {
+    logger.error('[ticket:command]', err.message);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction
+        .reply({ content: '⚠️ Ticket command failed.', flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    } else {
+      await interaction
+        .followUp({ content: '⚠️ Ticket command failed.', flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    }
+  }
+}
+
+// ── /ticket setup ─────────────────────────────────────────────────────────
+
+async function handleSetup(interaction) {
+  const opts = interaction.options;
+  const guildId = interaction.guildId;
+  const guild = interaction.guild;
+
+  const panelChannel = opts.getChannel('panel_channel');
+  const panelMessage = opts.getString('panel_message');
+  const buttonLabel  = opts.getString('button_label')       ?? undefined;
+  const category     = opts.getChannel('category')          ?? undefined;
+  const closedCat    = opts.getChannel('closed_category')   ?? undefined;
+  const staffRole    = opts.getRole('staff_role')            ?? undefined;
+  const logChannel   = opts.getChannel('log_channel')       ?? undefined;
+  const transcriptCh = opts.getChannel('transcript_channel') ?? undefined;
+  const maxTickets   = opts.getInteger('max_tickets')        ?? undefined;
+  const dmOnClose    = opts.getBoolean('dm_on_close')        ?? undefined;
+  const enablePrio   = opts.getBoolean('enable_priority')    ?? undefined;
+
+  // Build patch — only include explicitly provided values.
+  const patch = {
+    panelMessage,
+    panelChannelId: panelChannel.id,
+  };
+
+  if (buttonLabel   !== undefined) patch.buttonLabel          = buttonLabel;
+  if (closedCat     !== undefined) patch.closedCategoryId     = closedCat.id;
+  if (staffRole     !== undefined) patch.staffRoleId          = staffRole.id;
+  if (logChannel    !== undefined) patch.logChannelId         = logChannel.id;
+  if (transcriptCh  !== undefined) patch.transcriptChannelId  = transcriptCh.id;
+  if (maxTickets    !== undefined) patch.maxTicketsPerUser     = maxTickets;
+  if (dmOnClose     !== undefined) patch.dmOnClose            = dmOnClose;
+  if (enablePrio    !== undefined) patch.enablePriority       = enablePrio;
+
+  // Resolve or auto-create ticket category.
+  let categoryId;
+  if (category !== undefined) {
+    categoryId = category.id;
+  } else {
+    const existingCfg = getConfig(guildId);
+    if (existingCfg.categoryId) {
+      categoryId = existingCfg.categoryId;
+    } else {
+      // Auto-create a "Tickets" category with @everyone denied ViewChannel.
+      const created = await guild.channels.create({
+        name: 'Tickets',
+        type: ChannelType.GuildCategory,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            deny: [PermissionFlagsBits.ViewChannel],
+          },
+        ],
+      });
+      categoryId = created.id;
+    }
+  }
+  patch.categoryId = categoryId;
+
+  // Save config.
+  setConfig(guildId, patch);
+
+  // Post panel.
+  const cfg = getConfig(guildId);
+  const panelMsg = await postPanel(panelChannel, cfg);
+
+  // Store panel message location.
+  setConfig(guildId, {
+    panelChannelId: panelChannel.id,
+    panelMessageId: panelMsg.id,
+  });
+
+  // Build summary lines.
+  const lines = [
+    `✅ Ticket system configured!`,
+    `• Panel channel: <#${panelChannel.id}>`,
+    `• Panel message: "${panelMessage}"`,
+    `• Ticket category: <#${categoryId}>`,
+  ];
+  if (buttonLabel)    lines.push(`• Button label: "${buttonLabel}"`);
+  if (closedCat)      lines.push(`• Closed category: <#${closedCat.id}>`);
+  if (staffRole)      lines.push(`• Staff role: <@&${staffRole.id}>`);
+  if (logChannel)     lines.push(`• Log channel: <#${logChannel.id}>`);
+  if (transcriptCh)   lines.push(`• Transcript channel: <#${transcriptCh.id}>`);
+  if (maxTickets !== undefined) lines.push(`• Max tickets per user: ${maxTickets}`);
+  if (dmOnClose !== undefined)  lines.push(`• DM on close: ${dmOnClose}`);
+  if (enablePrio !== undefined)  lines.push(`• Priority buttons: ${enablePrio}`);
+  lines.push(`• Panel: https://discord.com/channels/${guildId}/${panelChannel.id}/${panelMsg.id}`);
+
+  return interaction.reply({
+    content: lines.join('\n'),
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+// ── /ticket config ────────────────────────────────────────────────────────
+
+async function handleConfig(interaction) {
+  const opts = interaction.options;
+  const guildId = interaction.guildId;
+
+  const panelChannel = opts.getChannel('panel_channel')        ?? undefined;
+  const panelMessage = opts.getString('panel_message')         ?? undefined;
+  const buttonLabel  = opts.getString('button_label')          ?? undefined;
+  const category     = opts.getChannel('category')             ?? undefined;
+  const closedCat    = opts.getChannel('closed_category')      ?? undefined;
+  const staffRole    = opts.getRole('staff_role')               ?? undefined;
+  const logChannel   = opts.getChannel('log_channel')          ?? undefined;
+  const transcriptCh = opts.getChannel('transcript_channel')   ?? undefined;
+  const maxTickets   = opts.getInteger('max_tickets')           ?? undefined;
+  const dmOnClose    = opts.getBoolean('dm_on_close')           ?? undefined;
+  const enablePrio   = opts.getBoolean('enable_priority')       ?? undefined;
+
+  // Build patch from only provided options.
+  const patch = {};
+  const changed = [];
+
+  if (panelChannel  !== undefined) { patch.panelChannelId        = panelChannel.id;  changed.push(`panel_channel → <#${panelChannel.id}>`); }
+  if (panelMessage  !== undefined) { patch.panelMessage          = panelMessage;      changed.push(`panel_message → "${panelMessage}"`); }
+  if (buttonLabel   !== undefined) { patch.buttonLabel           = buttonLabel;       changed.push(`button_label → "${buttonLabel}"`); }
+  if (category      !== undefined) { patch.categoryId            = category.id;       changed.push(`category → <#${category.id}>`); }
+  if (closedCat     !== undefined) { patch.closedCategoryId      = closedCat.id;      changed.push(`closed_category → <#${closedCat.id}>`); }
+  if (staffRole     !== undefined) { patch.staffRoleId           = staffRole.id;      changed.push(`staff_role → <@&${staffRole.id}>`); }
+  if (logChannel    !== undefined) { patch.logChannelId          = logChannel.id;     changed.push(`log_channel → <#${logChannel.id}>`); }
+  if (transcriptCh  !== undefined) { patch.transcriptChannelId   = transcriptCh.id;   changed.push(`transcript_channel → <#${transcriptCh.id}>`); }
+  if (maxTickets    !== undefined) { patch.maxTicketsPerUser      = maxTickets;        changed.push(`max_tickets → ${maxTickets}`); }
+  if (dmOnClose     !== undefined) { patch.dmOnClose             = dmOnClose;         changed.push(`dm_on_close → ${dmOnClose}`); }
+  if (enablePrio    !== undefined) { patch.enablePriority        = enablePrio;        changed.push(`enable_priority → ${enablePrio}`); }
+
+  if (changed.length === 0) {
+    return interaction.reply({
+      content: 'Nothing to change.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  setConfig(guildId, patch);
+  const cfg = getConfig(guildId);
+
+  // If panel_message or button_label changed, and a panel message exists → edit it.
+  const panelAffected = panelMessage !== undefined || buttonLabel !== undefined;
+  if (panelAffected && cfg.panelChannelId && cfg.panelMessageId) {
+    try {
+      const pCh = interaction.guild.channels.cache.get(cfg.panelChannelId)
+        ?? await interaction.guild.channels.fetch(cfg.panelChannelId).catch(() => null);
+      if (pCh) {
+        const pMsg = await pCh.messages.fetch(cfg.panelMessageId).catch(() => null);
+        if (pMsg) {
+          const { buildPanelEmbed: bpe } = require('../tickets/panel');
+          await pMsg.edit({
+            embeds: [bpe(cfg)],
+            components: [panelComponents(cfg.buttonLabel)],
+          });
+        }
+      }
+    } catch (e) {
+      logger.error('[ticket:config] panel edit failed:', e.message);
+    }
+  }
+
+  return interaction.reply({
+    content: `✅ Updated:\n• ${changed.join('\n• ')}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+module.exports = { data, execute, bypassModGate: true };
