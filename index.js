@@ -53,4 +53,16 @@ client.once(Events.ClientReady, async (c) => {
 process.on('unhandledRejection', (e) => logger.error('[unhandledRejection]', e));
 process.on('uncaughtException', (e) => logger.error('[uncaughtException]', e));
 
-client.login(env.token);
+if (!env.token) {
+  logger.error('❌ No bot token found. Set DISCORD_TOKEN (or BOT_TOKEN) in your environment / Railway Variables.');
+  process.exit(1);
+}
+
+client.login(env.token).catch((e) => {
+  // Surfaces the real reason clearly (e.g. invalid token, or "Used disallowed intents").
+  logger.error('❌ Discord login failed:', e.message || e);
+  if (String(e.message || '').toLowerCase().includes('disallowed intents')) {
+    logger.error('   → Enable MESSAGE CONTENT + SERVER MEMBERS intents in the Developer Portal (Bot tab).');
+  }
+  process.exit(1);
+});
