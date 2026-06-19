@@ -11,6 +11,9 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+const { getTicket } = require('../core/ticketStore');
+const { canCloseTicket } = require('./permissions');
+
 const { getConfig, openCount } = require('../core/ticketStore');
 const actions = require('./actions');
 const logger = require('../core/logger');
@@ -54,7 +57,8 @@ function register(client) {
 
     const isTicketModal =
       interaction.isModalSubmit() &&
-      interaction.customId === 'create_ticket_modal';
+      (interaction.customId === 'create_ticket_modal' ||
+        interaction.customId === 'ticket_close_modal');
 
     if (!isTicketButton && !isTicketModal) return;
 
@@ -114,11 +118,58 @@ function register(client) {
           case 'ticket_priority':
             return actions.setPriority(interaction, args[0]);
 
+          case 'ticket_close': {
+            const guildId = interaction.guildId;
+            const ticket = getTicket(interaction.channelId);
+            if (!ticket) {
+              return interaction.reply({
+                content: 'Not a ticket channel.',
+                flags: MessageFlags.Ephemeral,
+              });
+            }
+            if (!canCloseTicket(interaction.member, guildId, ticket)) {
+              return interaction.reply({
+                content: "⛔ You can't close this ticket.",
+                flags: MessageFlags.Ephemeral,
+              });
+            }
+            // Show the close-reason modal.
+            const closeModal = new ModalBuilder()
+              .setCustomId('ticket_close_modal')
+              .setTitle('Close Ticket');
+
+            const reasonInput = new TextInputBuilder()
+              .setCustomId('reason')
+              .setLabel('Reason for closing (optional)')
+              .setStyle(TextInputStyle.Paragraph)
+              .setPlaceholder('Add an optional reason…')
+              .setRequired(false)
+              .setMaxLength(1000);
+
+            closeModal.addComponents(
+              new ActionRowBuilder().addComponents(reasonInput),
+            );
+
+            return interaction.showModal(closeModal);
+          }
+
+          case 'ticket_reopen':
+            return actions.reopen(interaction);
+
+          case 'ticket_delete':
+            return actions.deleteTicket(interaction);
+
           default:
-            // ticket_close / ticket_reopen / ticket_delete / ticket_feedback*
-            // — handled by later chunks; ignore here.
+            // ticket_feedback* — handled by Chunk 5; ignore here.
             return;
         }
+      }
+
+      if (interaction.isModalSubmit() && interaction.customId === 'ticket_close_modal') {
+        const reason =
+          interaction.fields.getTextInputValue('reason') ||
+          'Closed without a specific reason.';
+        return actions.close(interaction, reason);
       }
 
       if (interaction.isModalSubmit() && interaction.customId === 'create_ticket_modal') {

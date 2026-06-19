@@ -7,6 +7,7 @@ const logger = require('../core/logger');
 const EVENT_TITLES = {
   open:     'Ticket Created',
   close:    'Ticket Closed',
+  reopen:   'Ticket Reopened',
   delete:   'Ticket Deleted',
   claim:    'Ticket Claimed',
   unclaim:  'Ticket Unclaimed',

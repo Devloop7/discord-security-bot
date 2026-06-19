@@ -21,6 +21,7 @@ const COLORS = {
 const LOG_COLORS = {
   open:     0x5865F2,
   close:    0xED4245,
+  reopen:   0x2ECC71,
   delete:   0x8B0000,
   claim:    0x5865F2,
   unclaim:  0xFAA61A,
