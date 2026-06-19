@@ -9,8 +9,11 @@ module.exports = {
     allowedRoles: [],     // role IDs allowed to post links freely
     allowedChannels: [],  // channel IDs where links are always allowed
     allowedDomains: ["tenor.com", "giphy.com"], // domains anyone may post
-    strikesToBan: 2,      // link strikes before a member is banned
-    blockInvites: true,   // treat discord.gg invites as a link strike
+    // Normal links are NEVER auto-banned. 1st offense = warning, repeats = escalating mute.
+    // Ban persistent offenders yourself with /ban — you stay in control.
+    timeoutSteps: ["10m", "1h", "12h", "1d"], // mute lengths for repeat link offenders
+    banScamLinks: true,   // known scam/phishing/IP-grabber links = INSTANT BAN (genuinely dangerous)
+    blockInvites: true,   // treat discord.gg invites as a link offense
   },
 
   profanity: {

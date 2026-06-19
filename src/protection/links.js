@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { hasLink, domainsOf, isInvite, isScam } = require('./linkscan');
 const { canPostLinks } = require('../core/whitelist');
+const { nextTimeout } = require('../core/escalate');
 const strikes = require('../core/strikes');
 const modlog = require('../core/modlog');
 const config = require('../../config');
@@ -30,36 +31,49 @@ function register(client) {
 
       await msg.delete().catch(() => {});
 
-      // Known scam / IP-grabber → instant ban.
+      // Known scam / IP-grabber → genuinely dangerous → instant ban (configurable).
       if (isScam(domains, scamDomains)) {
-        await banMember(msg.member, 'Posted a known scam/phishing link');
-        await modlog.log(msg.guild, {
-          title: '🚨 Scam link — instant ban',
-          description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Domains:** ${domains.join(', ')}`,
-          color: 0xE74C3C, ping: true,
-        });
-        return;
+        if (config.link.banScamLinks) {
+          await banMember(msg.member, 'Posted a known scam/phishing link');
+          await modlog.log(msg.guild, {
+            title: '🚨 Scam link — instant ban',
+            description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Domains:** ${domains.join(', ')}`,
+            color: 0xE74C3C, ping: true,
+          });
+          return;
+        }
+        // banScamLinks disabled → fall through to the normal escalating-mute path.
       }
 
-      // Otherwise: strike. Ban on reaching the configured threshold.
+      // Normal (non-dangerous) link → NEVER auto-ban.
+      // 1st offense = warning only; repeats = escalating mute. Ban manually if it persists.
       const count = strikes.add(msg.author.id, 'link');
-      if (count >= config.link.strikesToBan) {
-        await banMember(msg.member, `Reached ${count} link strikes`);
+      const content = invite ? 'Discord invite' : domains.join(', ');
+
+      if (count <= 1) {
+        await msg.channel.send({ content: `${msg.author}, links aren't allowed here. ⚠️ This is a friendly warning — please don't post links.` })
+          .then((m) => setTimeout(() => m.delete().catch(() => {}), 8000))
+          .catch(() => {});
         await modlog.log(msg.guild, {
-          title: '⛔ Banned — link strikes',
-          description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Strikes:** ${count}`,
-          color: 0xE74C3C, ping: true,
+          title: '🔗 Link removed (warning)',
+          description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Offense:** ${count} (warning only)\n**Content:** ${content}`,
         });
         return;
       }
 
-      await msg.channel.send({ content: `${msg.author}, links aren't allowed here. ⚠️ Strike ${count}/${config.link.strikesToBan} — next one is a ban.` })
+      // Repeat offender → escalating mute (count 2 → first step, 3 → second, …).
+      const ms = nextTimeout(count - 1, config.link.timeoutSteps);
+      let action = 'warned again';
+      if (ms > 0 && msg.member?.moderatable) {
+        await msg.member.timeout(ms, 'Repeated link posting').catch(() => {});
+        action = `muted (${config.link.timeoutSteps[Math.min(count - 1, config.link.timeoutSteps.length) - 1]})`;
+      }
+      await msg.channel.send({ content: `${msg.author}, links aren't allowed here. 🔇 You've been ${action} for repeating it.` })
         .then((m) => setTimeout(() => m.delete().catch(() => {}), 8000))
         .catch(() => {});
-
       await modlog.log(msg.guild, {
-        title: '🔗 Link removed',
-        description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Strike:** ${count}/${config.link.strikesToBan}\n**Content:** ${invite ? 'Discord invite' : domains.join(', ')}`,
+        title: '🔗 Link removed — repeat offender',
+        description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Offense:** ${count}\n**Action:** ${action}\n**Content:** ${content}`,
       });
     } catch (err) {
       console.error('[links]', err.message);
