@@ -5,6 +5,7 @@ const { isTrusted } = require('../core/whitelist');
 const { fetchExecutor } = require('../core/auditlog');
 const modlog = require('../core/modlog');
 const config = require('../../config');
+const logger = require('../core/logger');
 
 const DANGEROUS = [
   PermissionFlagsBits.Administrator,
@@ -83,7 +84,7 @@ function register(client) {
       });
       if (member) handleAction(newRole.guild, member.id, 'permission grant');
     } catch (err) {
-      console.error('[antinuke:roleupdate]', err.message);
+      logger.error('[antinuke:roleupdate]', err.message);
     }
   });
 }

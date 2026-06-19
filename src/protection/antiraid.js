@@ -3,6 +3,7 @@ const { Events, GuildVerificationLevel } = require('discord.js');
 const RateWindow = require('../core/ratewindow');
 const modlog = require('../core/modlog');
 const config = require('../../config');
+const logger = require('../core/logger');
 
 function register(client) {
   const joins = new RateWindow(config.antiraid.perSeconds * 1000);
@@ -45,7 +46,7 @@ function register(client) {
         });
       }
     } catch (err) {
-      console.error('[antiraid]', err.message);
+      logger.error('[antiraid]', err.message);
     }
   });
 }

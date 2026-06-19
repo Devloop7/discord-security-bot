@@ -4,6 +4,7 @@ const RateWindow = require('../core/ratewindow');
 const { isTrusted } = require('../core/whitelist');
 const modlog = require('../core/modlog');
 const config = require('../../config');
+const logger = require('../core/logger');
 
 function register(client) {
   const flood = new RateWindow(config.spam.perSeconds * 1000);
@@ -38,7 +39,7 @@ function register(client) {
         flood.reset(msg.author.id);
       }
     } catch (err) {
-      console.error('[spam]', err.message);
+      logger.error('[spam]', err.message);
     }
   });
 }

@@ -29,3 +29,5 @@ Everything (thresholds, word list, whitelists) is in `config.js`, `src/data/badw
 | `APP_ID` | Yes | Application (client) ID from the Discord developer portal. |
 | `OWNER_IDS` | No | Comma-separated user IDs merged into the anti-nuke trust list alongside `trustedUsers` in `config.js`. Useful for keeping sensitive IDs out of source control. |
 | `LOG_LEVEL` | No | Controls console verbosity: `error`, `warn`, `info`, or `debug`. Defaults to `info`. Use `warn` for a quieter console in production. |
+| `NODE_ENV` | No | Set to `production` for a quieter console (warnings/errors only) unless `LOG_LEVEL` is set. |
+| `LOG_TO_FILE` | No | `true` writes all logs to `logs/bot.log` (useful when hosted 24/7). Default off. |

@@ -7,6 +7,7 @@ const { nextTimeout } = require('../core/escalate');
 const strikes = require('../core/strikes');
 const modlog = require('../core/modlog');
 const config = require('../../config');
+const logger = require('../core/logger');
 
 const words = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'badwords.json'), 'utf8'));
 
@@ -35,7 +36,7 @@ function register(client) {
         description: `**User:** ${msg.author.tag} (${msg.author.id})\n**Action:** ${action}\n**Offense #:** ${count}`,
       });
     } catch (err) {
-      console.error('[profanity]', err.message);
+      logger.error('[profanity]', err.message);
     }
   });
 }

@@ -6,6 +6,7 @@
 # Runtime data (strikes, backups, etc.) — root only, NOT src/data/
 /data/
 *.log
+logs/
 
 # Node
 node_modules/

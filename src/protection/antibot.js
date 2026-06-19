@@ -3,6 +3,7 @@ const { Events, AuditLogEvent } = require('discord.js');
 const { fetchExecutor } = require('../core/auditlog');
 const { isTrusted } = require('../core/whitelist');
 const modlog = require('../core/modlog');
+const logger = require('../core/logger');
 
 function register(client) {
   client.on(Events.GuildMemberAdd, async (member) => {
@@ -20,7 +21,7 @@ function register(client) {
         color: 0xE74C3C, ping: true,
       });
     } catch (err) {
-      console.error('[antibot]', err.message);
+      logger.error('[antibot]', err.message);
     }
   });
 }

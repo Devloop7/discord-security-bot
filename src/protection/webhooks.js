@@ -3,6 +3,7 @@ const { Events, AuditLogEvent } = require('discord.js');
 const { isTrusted } = require('../core/whitelist');
 const { fetchExecutor } = require('../core/auditlog');
 const modlog = require('../core/modlog');
+const logger = require('../core/logger');
 
 function register(client) {
   client.on(Events.WebhooksUpdate, async (channel) => {
@@ -40,7 +41,7 @@ function register(client) {
         });
       }
     } catch (err) {
-      console.error('[webhooks]', err.message);
+      logger.error('[webhooks]', err.message);
     }
   });
 }

@@ -1,6 +1,7 @@
 // src/commands/index.js
 const { Events, Collection, PermissionFlagsBits, MessageFlags } = require('discord.js');
 const config = require('../../config');
+const logger = require('../core/logger');
 
 const commandModules = [
   require('./lockdown'),
@@ -34,7 +35,7 @@ function register(client) {
       }
       await cmd.execute(interaction);
     } catch (err) {
-      console.error('[command]', err.message);
+      logger.error('[command]', err.message);
       if (!interaction.replied) interaction.reply({ content: '⚠️ Command failed.', flags: MessageFlags.Ephemeral }).catch(() => {});
     }
   });
