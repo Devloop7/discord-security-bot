@@ -254,8 +254,8 @@ async function claim(interaction) {
   if (existingClaimMsg) {
     await existingClaimMsg.edit({ embeds: [claimEmbed], components: [unclaimRow] }).catch(() => {});
   } else {
-    const sent = await channel.send({ embeds: [claimEmbed], components: [unclaimRow] });
-    updateTicket(channelId, { claimMsgId: sent.id });
+    const sent = await channel.send({ embeds: [claimEmbed], components: [unclaimRow] }).catch(() => null);
+    if (sent) updateTicket(channelId, { claimMsgId: sent.id });
   }
 
   await interaction.reply({ content: '✅ You claimed this ticket.', flags: MessageFlags.Ephemeral });
@@ -415,7 +415,7 @@ async function setPriority(interaction, level) {
     .setDescription(`📊 Priority set to **${p.emoji} ${p.label}** by <@${member.id}>`)
     .setColor(p.color);
 
-  await channel.send({ embeds: [statusEmbed] });
+  await channel.send({ embeds: [statusEmbed] }).catch(() => {});
 
   await interaction.reply({ content: '✅ Priority updated.', flags: MessageFlags.Ephemeral });
 
@@ -492,7 +492,7 @@ async function close(interaction, reason) {
     .setColor(COLORS.closed)
     .setFooter({ text: `Ticket ID: ${channelId}` });
 
-  await channel.send({ embeds: [closeEmbed], components: [closedRow()] });
+  await channel.send({ embeds: [closeEmbed], components: [closedRow()] }).catch(() => {});
 
   // DM the opener if configured.
   if (cfg.dmOnClose) {

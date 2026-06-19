@@ -27,6 +27,8 @@ const LOG_COLORS = {
   unclaim:  0xFAA61A,
   priority: 0x9B59B6,
   feedback: 0x57F287,
+  pin:      0x5865F2,
+  unpin:    0x95A5A6,
 };
 
 /**
