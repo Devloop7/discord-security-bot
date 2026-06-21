@@ -49,6 +49,15 @@ client.once(Events.ClientReady, async (c) => {
   } catch (e) {
     logger.error('[auto-register] failed:', e.message || e);
   }
+  try {
+    const fs = require('node:fs');
+    const dir = require('./src/core/store').dataDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    logger.warn(`💾 Data dir: ${dir} (writable). On Railway, mount a Volume here (set BOT_DATA_DIR) or data is wiped each deploy.`);
+  } catch (e) {
+    logger.error('❌ Data dir not writable — tickets/warnings will not persist:', e.message);
+  }
 });
 
 // Global safety nets so one bad event never crashes the bot.

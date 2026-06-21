@@ -27,4 +27,17 @@ function write(name, data) {
   fs.renameSync(tmp, file); // near-atomic replace
 }
 
-module.exports = { read, write, dataDir };
+const queues = new Map(); // file name -> Promise chain
+function mutate(name, fn, fallback = {}) {
+  const prev = queues.get(name) || Promise.resolve();
+  const next = prev.then(async () => {
+    const data = read(name, fallback);
+    const result = await fn(data); // fn mutates `data` in place; may return a value
+    write(name, data);
+    return result;
+  });
+  queues.set(name, next.catch(() => {})); // keep the chain alive even if one op throws
+  return next;
+}
+
+module.exports = { read, write, dataDir, mutate };
