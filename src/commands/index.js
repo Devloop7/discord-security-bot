@@ -15,6 +15,9 @@ const commandModules = [
   require('./warnings'),
   require('./clearwarnings'),
   require('./ticket'),
+  require('./embed'),
+  require('./say'),
+  require('./embededit'),
 ];
 
 const commands = new Collection();
