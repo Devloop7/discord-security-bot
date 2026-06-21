@@ -27,3 +27,12 @@ test('set returns the updated guild config', async () => {
   assert.strictEqual(result.alertRoleId, 'r99');
   assert.strictEqual(result.modLogChannelId, null);
 });
+
+test('set deep-merges nested objects without dropping siblings', async () => {
+  await gc.set('g3', { welcome: { enabled: true } });
+  await gc.set('g3', { welcome: { channelId: 'wc' } });
+  const cfg = gc.get('g3');
+  assert.strictEqual(cfg.welcome.enabled, true);            // from first patch
+  assert.strictEqual(cfg.welcome.channelId, 'wc');          // from second patch
+  assert.strictEqual(cfg.welcome.text, 'Welcome {user}!');  // default sibling preserved
+});

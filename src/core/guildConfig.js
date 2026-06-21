@@ -13,8 +13,29 @@ const DEFAULTS = {
 };
 
 function all() { return store.read(FILE, {}); }
-function get(guildId) { return { ...structuredClone(DEFAULTS), ...(all()[guildId] || {}) }; }
-function set(guildId, patch) {
-  return store.mutate(FILE, (d) => { d[guildId] = { ...DEFAULTS, ...(d[guildId] || {}), ...patch }; return d[guildId]; });
+
+function isPlainObject(v) {
+  return v && typeof v === 'object' && !Array.isArray(v);
 }
-module.exports = { get, set, DEFAULTS };
+// Recursively merge `patch` onto `base` (arrays and scalars are replaced wholesale).
+function deepMerge(base, patch) {
+  const out = { ...base };
+  for (const key of Object.keys(patch || {})) {
+    out[key] = isPlainObject(base?.[key]) && isPlainObject(patch[key])
+      ? deepMerge(base[key], patch[key])
+      : patch[key];
+  }
+  return out;
+}
+
+function get(guildId) {
+  return deepMerge(structuredClone(DEFAULTS), all()[guildId] || {});
+}
+function set(guildId, patch) {
+  return store.mutate(FILE, (d) => {
+    const base = deepMerge(structuredClone(DEFAULTS), d[guildId] || {});
+    d[guildId] = deepMerge(base, patch);
+    return d[guildId];
+  });
+}
+module.exports = { get, set, deepMerge, DEFAULTS };
