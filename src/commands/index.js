@@ -1,7 +1,7 @@
 // src/commands/index.js
-const { Events, Collection, PermissionFlagsBits, MessageFlags } = require('discord.js');
-const config = require('../../config');
+const { Events, Collection, MessageFlags } = require('discord.js');
 const logger = require('../core/logger');
+const access = require('../core/access');
 
 const commandModules = [
   require('./lockdown'),
@@ -50,15 +50,12 @@ const commandModules = [
   require('./automod'),
   // Phase F — invite tracker
   require('./invites'),
+  // Phase G — permission / staff-levels
+  require('./perms'),
 ];
 
 const commands = new Collection();
 for (const c of commandModules) commands.set(c.data.name, c);
-
-function isMod(member) {
-  if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true;
-  return config.mods.roleId && member.roles.cache.has(config.mods.roleId);
-}
 
 function register(client) {
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -66,8 +63,11 @@ function register(client) {
     const cmd = commands.get(interaction.commandName);
     if (!cmd) return;
     try {
-      if (!cmd.bypassModGate && !isMod(interaction.member)) {
-        return interaction.reply({ content: '⛔ You are not allowed to use this.', flags: MessageFlags.Ephemeral });
+      // Unified authorization (owner / overrides / staff levels / ManageGuild).
+      // bypassModGate commands are public by default but still honour disable/deny overrides.
+      const verdict = access.canRun(interaction.member, interaction.commandName, interaction.guildId, { bypassModGate: cmd.bypassModGate });
+      if (!verdict.ok) {
+        return interaction.reply({ content: `⛔ ${verdict.reason}`, flags: MessageFlags.Ephemeral });
       }
       await cmd.execute(interaction);
     } catch (err) {

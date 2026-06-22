@@ -21,6 +21,7 @@ const DEFAULTS = {
   },
   reactionRoles: {}, autoresponders: [],
   suggestions: { channelId: null },
+  permissions: { commandOverrides: {}, staffLevels: { mod: [], admin: [] } },
 };
 
 function all() { return store.read(FILE, {}); }
