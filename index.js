@@ -4,6 +4,7 @@ const env = require('./src/core/env');
 const { Client, GatewayIntentBits, Partials, Events } = require('discord.js');
 const logger = require('./src/core/logger');
 const { registerCommands } = require('./src/commands/registerCommands');
+const scheduler = require('./src/core/scheduler');
 
 const client = new Client({
   intents: [
@@ -58,6 +59,8 @@ client.once(Events.ClientReady, async (c) => {
   } catch (e) {
     logger.error('❌ Data dir not writable — tickets/warnings will not persist:', e.message);
   }
+  await scheduler.init(c);
+  logger.info('⏰ Scheduler initialized.');
 });
 
 // Global safety nets so one bad event never crashes the bot.

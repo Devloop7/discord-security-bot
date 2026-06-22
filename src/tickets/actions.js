@@ -10,6 +10,7 @@ const {
   ButtonStyle,
   MessageFlags,
 } = require('discord.js');
+const scheduler = require('../core/scheduler');
 
 // ---------------------------------------------------------------------------
 // 2FA error helper
@@ -672,42 +673,57 @@ async function deleteTicket(interaction) {
     ],
   });
 
-  const cfg = getConfig(guildId);
+  scheduler.schedule('ticket-delete', Date.now() + 3000, {
+    guildId: interaction.guildId,
+    channelId: interaction.channelId,
+    number: ticket?.number || null,
+    byTag: interaction.user.tag,
+  });
+}
 
-  setTimeout(async () => {
-    try {
-      const { buffer, filename } = await generateHtml(channel);
+/**
+ * Handler invoked by the scheduler (survives restarts).
+ * Generates an HTML transcript, posts it to the transcript channel, then deletes the ticket channel.
+ */
+async function performTicketDelete(data, client) {
+  try {
+    const { guildId, channelId, number: ticketNum, byTag } = data;
 
-      if (cfg.transcriptChannelId) {
-        const transcriptChannel = await guild.channels
-          .fetch(cfg.transcriptChannelId)
-          .catch(() => null);
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel) return; // already deleted
 
-        if (transcriptChannel) {
-          const transcriptEmbed = new EmbedBuilder()
-            .setTitle('Ticket Transcript')
-            .addFields(
-              { name: 'Ticket',    value: `#${ticketNum}`,                              inline: true },
-              { name: 'Channel',   value: `#${channel.name}`,                           inline: true },
-              { name: 'Generated', value: `<t:${Math.floor(Date.now() / 1000)}:F>`,     inline: true },
-            )
-            .setFooter({ text: `Deleted by ${member.user.tag}` })
-            .setColor(0x3498DB);
+    const { buffer, filename } = await generateHtml(channel);
 
-          await transcriptChannel.send({
-            embeds: [transcriptEmbed],
-            files: [{ attachment: buffer, name: filename }],
-          });
-        }
+    const cfg = getConfig(guildId);
+    if (cfg.transcriptChannelId) {
+      const transcriptChannel = await client.channels
+        .fetch(cfg.transcriptChannelId)
+        .catch(() => null);
+
+      if (transcriptChannel) {
+        const transcriptEmbed = new EmbedBuilder()
+          .setTitle('Ticket Transcript')
+          .addFields(
+            { name: 'Ticket',    value: `#${ticketNum || channelId}`,                  inline: true },
+            { name: 'Channel',   value: `#${channel.name}`,                            inline: true },
+            { name: 'Generated', value: `<t:${Math.floor(Date.now() / 1000)}:F>`,      inline: true },
+          )
+          .setFooter({ text: `Deleted by ${byTag}` })
+          .setColor(0x3498DB);
+
+        await transcriptChannel.send({
+          embeds: [transcriptEmbed],
+          files: [{ attachment: buffer, name: filename }],
+        });
       }
-
-      await channel.delete().catch(() => {});
-    } catch (e) {
-      logger.error('[ticket:delete] error in timeout:', e.message);
     }
-  }, 3000);
+
+    await channel.delete().catch(() => {});
+  } catch (e) {
+    logger.error('[ticket:delete] performTicketDelete error:', e.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
 
-module.exports = { openTicket, claim, unclaim, pin, setPriority, close, reopen, deleteTicket, isTwoFactorError, TWO_FA_MSG };
+module.exports = { openTicket, claim, unclaim, pin, setPriority, close, reopen, deleteTicket, performTicketDelete, isTwoFactorError, TWO_FA_MSG };

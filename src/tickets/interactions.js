@@ -48,6 +48,8 @@ function hit(key) {
 // ---------------------------------------------------------------------------
 
 function register(client) {
+  require('../core/scheduler').register('ticket-delete', actions.performTicketDelete);
+
   client.on(Events.InteractionCreate, async (interaction) => {
     // We only care about ticket-related interactions; everything else is
     // handled by the slash-command dispatcher registered elsewhere.
