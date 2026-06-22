@@ -11,6 +11,29 @@ const {
   MessageFlags,
 } = require('discord.js');
 
+// ---------------------------------------------------------------------------
+// 2FA error helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the Discord API error indicates the server requires 2FA
+ * for moderation actions and the bot owner hasn't enabled it.
+ * Primary code: 60003 (MFA required).  Also catches 40002 and message-based checks.
+ */
+function isTwoFactorError(e) {
+  return e && (
+    e.code === 60003 ||
+    e.code === 40002 ||
+    /two[- ]?factor|2fa/i.test(String(e.message || ''))
+  );
+}
+
+const TWO_FA_MSG =
+  "⚠️ I couldn't create the ticket channel because this server **requires 2FA for moderation**. " +
+  'The account that OWNS the bot must enable Two-Factor Authentication ' +
+  '(Discord → User Settings → My Account → Enable Two-Factor Auth). ' +
+  'After enabling it, try again.';
+
 const {
   getConfig, setConfig, nextCounter,
   getTicket, createTicket, updateTicket, openCount,
@@ -136,12 +159,21 @@ async function openTicket(interaction) {
     });
   }
 
-  const channel = await guild.channels.create({
-    name: `ticket-${num}`,
-    type: ChannelType.GuildText,
-    parent: categoryId,
-    permissionOverwrites,
-  });
+  let channel;
+  try {
+    channel = await guild.channels.create({
+      name: `ticket-${num}`,
+      type: ChannelType.GuildText,
+      parent: categoryId,
+      permissionOverwrites,
+    });
+  } catch (err) {
+    logger.error('[ticket:open] channel create failed:', err.message);
+    if (isTwoFactorError(err)) {
+      return interaction.editReply(TWO_FA_MSG);
+    }
+    return interaction.editReply('⚠️ Failed to create the ticket channel. Please try again later.');
+  }
 
   // ── Build welcome embed ────────────────────────────────────────────────
   const createdTs = Math.floor(Date.now() / 1000);
@@ -678,4 +710,4 @@ async function deleteTicket(interaction) {
 
 // ---------------------------------------------------------------------------
 
-module.exports = { openTicket, claim, unclaim, pin, setPriority, close, reopen, deleteTicket };
+module.exports = { openTicket, claim, unclaim, pin, setPriority, close, reopen, deleteTicket, isTwoFactorError, TWO_FA_MSG };

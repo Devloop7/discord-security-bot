@@ -3,9 +3,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { hasLink, domainsOf, isInvite, isScam } = require('../src/protection/linkscan');
 
-test('hasLink detects urls and bare domains', () => {
+test('hasLink requires scheme or www', () => {
   assert.strictEqual(hasLink('check https://youtube.com/watch'), true);
-  assert.strictEqual(hasLink('go to example.com please'), true);
+  assert.strictEqual(hasLink('visit www.YouTube.com'), true);
+  assert.strictEqual(hasLink('go to example.com please'), false); // bare domain no longer trips
   assert.strictEqual(hasLink('no links here at all'), false);
 });
 

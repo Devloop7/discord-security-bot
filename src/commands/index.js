@@ -14,6 +14,7 @@ const commandModules = [
   require('./note'),
   require('./warnings'),
   require('./clearwarnings'),
+  require('./clearstrikes'),
   require('./ticket'),
   require('./embed'),
   require('./say'),
@@ -40,7 +41,7 @@ function register(client) {
       await cmd.execute(interaction);
     } catch (err) {
       logger.error('[command]', err.message);
-      if (!interaction.replied) interaction.reply({ content: '⚠️ Command failed.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      if (!interaction.replied && !interaction.deferred) interaction.reply({ content: '⚠️ Command failed.', flags: MessageFlags.Ephemeral }).catch(() => {});
     }
   });
 }

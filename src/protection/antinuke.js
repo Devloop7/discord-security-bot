@@ -7,6 +7,8 @@ const modlog = require('../core/modlog');
 const config = require('../../config');
 const logger = require('../core/logger');
 
+const seenEntries = new Map(); // entryId -> ts (TTL dedupe across gateway events)
+
 const DANGEROUS = [
   PermissionFlagsBits.Administrator,
   PermissionFlagsBits.BanMembers,
@@ -20,10 +22,17 @@ const DANGEROUS = [
 function register(client) {
   const window = new RateWindow(config.antinuke.perSeconds * 1000);
 
-  async function handleAction(guild, executorId, label) {
+  async function handleAction(guild, executorId, label, entryId) {
     if (!executorId) return;
     const member = await guild.members.fetch(executorId).catch(() => null);
     if (!member || isTrusted(member) || member.id === client.user.id) return;
+
+    if (entryId) {
+      const now = Date.now();
+      for (const [k, t] of seenEntries) if (now - t > 30_000) seenEntries.delete(k);
+      if (seenEntries.has(entryId)) return; // same audited action already counted
+      seenEntries.set(entryId, now);
+    }
 
     const count = window.record(executorId);
     if (count < config.antinuke.maxActions) return;
@@ -46,23 +55,23 @@ function register(client) {
 
   client.on(Events.ChannelDelete, async (ch) => {
     const r = await fetchExecutor(ch.guild, AuditLogEvent.ChannelDelete, ch.id);
-    if (r) handleAction(ch.guild, r.executorId, 'channel delete');
+    if (r) handleAction(ch.guild, r.executorId, 'channel delete', r.entryId);
   });
   client.on(Events.ChannelCreate, async (ch) => {
     const r = await fetchExecutor(ch.guild, AuditLogEvent.ChannelCreate, ch.id);
-    if (r) handleAction(ch.guild, r.executorId, 'channel create');
+    if (r) handleAction(ch.guild, r.executorId, 'channel create', r.entryId);
   });
   client.on(Events.GuildRoleDelete, async (role) => {
     const r = await fetchExecutor(role.guild, AuditLogEvent.RoleDelete, role.id);
-    if (r) handleAction(role.guild, r.executorId, 'role delete');
+    if (r) handleAction(role.guild, r.executorId, 'role delete', r.entryId);
   });
   client.on(Events.GuildBanAdd, async (ban) => {
     const r = await fetchExecutor(ban.guild, AuditLogEvent.MemberBanAdd, ban.user.id);
-    if (r) handleAction(ban.guild, r.executorId, 'member ban');
+    if (r) handleAction(ban.guild, r.executorId, 'member ban', r.entryId);
   });
   client.on(Events.GuildMemberRemove, async (member) => {
     const r = await fetchExecutor(member.guild, AuditLogEvent.MemberKick, member.id);
-    if (r) handleAction(member.guild, r.executorId, 'member kick');
+    if (r) handleAction(member.guild, r.executorId, 'member kick', r.entryId);
   });
 
   // Permission-grant watch: revert dangerous permission additions to a role.
@@ -82,7 +91,7 @@ function register(client) {
         description: `**Role:** ${newRole.name}\n**By:** ${member ? member.user.tag : 'unknown'}`,
         color: 0xF1C40F, ping: true,
       });
-      if (member) handleAction(newRole.guild, member.id, 'permission grant');
+      if (member) handleAction(newRole.guild, member.id, 'permission grant', r?.entryId);
     } catch (err) {
       logger.error('[antinuke:roleupdate]', err.message);
     }
