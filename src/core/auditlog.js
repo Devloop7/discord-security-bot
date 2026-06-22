@@ -8,7 +8,7 @@ async function fetchExecutor(guild, type, targetId = null) {
       const entry = logs.entries.find(
         (e) => (!targetId || e.target?.id === targetId) && Date.now() - e.createdTimestamp < 10_000,
       );
-      if (entry) return { executorId: entry.executor?.id ?? null, executor: entry.executor ?? null };
+      if (entry) return { executorId: entry.executor?.id ?? null, executor: entry.executor ?? null, entryId: entry.id };
     } catch {
       /* missing View Audit Log permission or transient error */
     }
