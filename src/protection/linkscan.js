@@ -1,12 +1,17 @@
 // src/protection/linkscan.js
-const URL_RE = /(?:https?:\/\/|www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/?#][^\s]*)?/gi;
+const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
 const INVITE_RE = /(?:discord(?:\.gg|app\.com\/invite|\.com\/invite)|discord\.gg)\/[a-z0-9-]+/i;
 
 function domainsOf(text) {
   const out = [];
   for (const m of String(text).matchAll(URL_RE)) {
-    const host = m[1].toLowerCase().replace(/^www\./, '');
-    if (!out.includes(host)) out.push(host);
+    // strip scheme (https:// or http://)
+    let raw = m[0].replace(/^https?:\/\//i, '');
+    // strip leading www.
+    raw = raw.replace(/^www\./i, '');
+    // cut at first / ? or #
+    const host = raw.split(/[/?#]/)[0].toLowerCase();
+    if (host && !out.includes(host)) out.push(host);
   }
   return out;
 }
