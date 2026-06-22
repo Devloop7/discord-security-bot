@@ -135,6 +135,21 @@ const data = new SlashCommandBuilder()
         o.setName('enable_priority').setDescription('Show priority buttons on tickets'),
       ),
   )
+  // ── quicksetup ───────────────────────────────────────────────────────────
+  .addSubcommand((sub) =>
+    sub
+      .setName('quicksetup')
+      .setDescription('One-command ticket setup — auto-creates category, log channel, and posts the panel')
+      .addRoleOption((o) =>
+        o.setName('staff_role').setDescription('Role that can see and manage tickets'),
+      )
+      .addChannelOption((o) =>
+        o
+          .setName('panel_channel')
+          .setDescription('Channel where the panel will be posted (default: this channel)')
+          .addChannelTypes(ChannelType.GuildText),
+      ),
+  )
   // ── close ────────────────────────────────────────────────────────────────
   .addSubcommand((sub) =>
     sub
@@ -222,8 +237,9 @@ async function execute(interaction) {
   }
 
   try {
-    if (sub === 'setup') return await handleSetup(interaction);
-    if (sub === 'config') return await handleConfig(interaction);
+    if (sub === 'setup')      return await handleSetup(interaction);
+    if (sub === 'config')     return await handleConfig(interaction);
+    if (sub === 'quicksetup') return await handleQuickSetup(interaction);
   } catch (err) {
     logger.error('[ticket:command]', err.message);
     if (!interaction.replied && !interaction.deferred) {
@@ -402,6 +418,166 @@ async function handleConfig(interaction) {
     content: `✅ Updated:\n• ${changed.join('\n• ')}`,
     flags: MessageFlags.Ephemeral,
   });
+}
+
+// ── /ticket quicksetup ────────────────────────────────────────────────────
+
+async function handleQuickSetup(interaction) {
+  const { guild, guildId, channel: invocationChannel } = interaction;
+  const opts = interaction.options;
+
+  const staffRole    = opts.getRole('staff_role')      ?? undefined;
+  const panelChannel = opts.getChannel('panel_channel') ?? invocationChannel;
+
+  // ── Bot permission preflight ─────────────────────────────────────────────
+  const botMember = interaction.guild.members.me;
+  const required  = [
+    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.ManageRoles,
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+  ];
+  const missing = required.filter((p) => !botMember.permissions.has(p));
+
+  if (missing.length > 0) {
+    const names = {
+      [String(PermissionFlagsBits.ManageChannels)]: 'Manage Channels',
+      [String(PermissionFlagsBits.ManageRoles)]:    'Manage Roles',
+      [String(PermissionFlagsBits.ViewChannel)]:    'View Channel',
+      [String(PermissionFlagsBits.SendMessages)]:   'Send Messages',
+    };
+    const list = missing.map((p) => names[String(p)] || String(p)).join(', ');
+    return interaction.reply({
+      content: `⚠️ I'm missing permissions: **${list}**. Re-invite me with the full permissions link.`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  try {
+    // ── Resolve or auto-create the ticket category ─────────────────────────
+    let categoryId;
+    const existingCfg = getConfig(guildId);
+
+    if (existingCfg.categoryId) {
+      categoryId = existingCfg.categoryId;
+    } else {
+      const found = guild.channels.cache.find(
+        (c) =>
+          c.type === ChannelType.GuildCategory &&
+          c.name.toLowerCase().includes('tickets'),
+      );
+
+      if (found) {
+        categoryId = found.id;
+      } else {
+        const created = await guild.channels.create({
+          name: 'Tickets',
+          type: ChannelType.GuildCategory,
+          permissionOverwrites: [
+            {
+              id: guild.roles.everyone.id,
+              deny: [PermissionFlagsBits.ViewChannel],
+            },
+          ],
+        });
+        categoryId = created.id;
+      }
+    }
+
+    setConfig(guildId, { categoryId });
+
+    // ── Auto-create ticket-logs if no logChannelId configured yet ──────────
+    let logChannelId = existingCfg.logChannelId || null;
+
+    if (!logChannelId) {
+      try {
+        const logOverwrites = [
+          {
+            id: guild.roles.everyone.id,
+            deny: [PermissionFlagsBits.ViewChannel],
+          },
+        ];
+        if (staffRole) {
+          logOverwrites.push({
+            id: staffRole.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+            ],
+          });
+        }
+        const logCh = await guild.channels.create({
+          name: 'ticket-logs',
+          type: ChannelType.GuildText,
+          parent: categoryId,
+          permissionOverwrites: logOverwrites,
+        });
+        logChannelId = logCh.id;
+      } catch (e) {
+        logger.error('[ticket:quicksetup] could not create log channel:', e.message);
+        // Continue without logs — don't abort.
+      }
+    }
+
+    // ── Build default config patch (only fill in unset values) ────────────
+    const patch = { categoryId };
+
+    if (logChannelId) {
+      patch.logChannelId = logChannelId;
+      if (!existingCfg.transcriptChannelId) patch.transcriptChannelId = logChannelId;
+    }
+
+    if (!existingCfg.panelMessage) {
+      patch.panelMessage =
+        'Need help or want to open a request? Click the button below and a private ticket will be created for you. Our staff will assist you shortly.';
+    }
+    if (!existingCfg.buttonLabel || existingCfg.buttonLabel === 'Create Ticket') {
+      patch.buttonLabel = 'Create Ticket';
+    }
+    if (staffRole) patch.staffRoleId = staffRole.id;
+    if (existingCfg.enablePriority === undefined || existingCfg.enablePriority === null) {
+      patch.enablePriority = true;
+    }
+    if (existingCfg.dmOnClose === undefined || existingCfg.dmOnClose === null) {
+      patch.dmOnClose = true;
+    }
+    if (!existingCfg.maxTicketsPerUser) {
+      patch.maxTicketsPerUser = 3;
+    }
+
+    setConfig(guildId, patch);
+
+    // ── Post panel ─────────────────────────────────────────────────────────
+    const cfg = getConfig(guildId);
+    const panelMsg = await postPanel(panelChannel, cfg);
+
+    setConfig(guildId, {
+      panelChannelId: panelChannel.id,
+      panelMessageId: panelMsg.id,
+    });
+
+    // ── Reply ──────────────────────────────────────────────────────────────
+    const jumpLink = `https://discord.com/channels/${guildId}/${panelChannel.id}/${panelMsg.id}`;
+    return interaction.reply({
+      content:
+        `✅ Tickets ready! Panel posted in <#${panelChannel.id}>. ` +
+        `Click **Create Ticket** to test — a private channel will open.\n` +
+        `[Jump to panel](${jumpLink})`,
+      flags: MessageFlags.Ephemeral,
+    });
+
+  } catch (err) {
+    logger.error('[ticket:quicksetup]', err.message);
+    const { isTwoFactorError, TWO_FA_MSG } = require('../tickets/actions');
+    if (isTwoFactorError(err)) {
+      return interaction.reply({ content: TWO_FA_MSG, flags: MessageFlags.Ephemeral });
+    }
+    return interaction.reply({
+      content: `⚠️ Quick setup failed: ${err.message}`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
 }
 
 module.exports = { data, execute, bypassModGate: true };
