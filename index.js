@@ -28,6 +28,7 @@ const modules = [
   require('./src/protection/antibot'),
   require('./src/protection/antiraid'),
   require('./src/moderation'),
+  require('./src/utility'),
   require('./src/commands'),
   require('./src/tickets/interactions'),
   require('./src/embeds/interactions'),

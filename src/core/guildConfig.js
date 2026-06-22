@@ -10,6 +10,7 @@ const DEFAULTS = {
   logging: { channelId: null, events: {} },
   automod: { caps: false, emojiSpam: false, dupText: false },
   reactionRoles: {}, autoresponders: [],
+  suggestions: { channelId: null },
 };
 
 function all() { return store.read(FILE, {}); }

@@ -32,6 +32,17 @@ const commandModules = [
   require('./slowmode'),
   require('./role'),
   require('./nick'),
+  // Phase B — utility & info
+  require('./userinfo'),
+  require('./serverinfo'),
+  require('./roleinfo'),
+  require('./channelinfo'),
+  require('./avatar'),
+  require('./banner'),
+  require('./membercount'),
+  require('./poll'),
+  require('./suggest'),
+  require('./suggestions'),
 ];
 
 const commands = new Collection();
