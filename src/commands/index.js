@@ -43,6 +43,8 @@ const commandModules = [
   require('./poll'),
   require('./suggest'),
   require('./suggestions'),
+  // Phase C — reaction roles
+  require('./reactionroles'),
 ];
 
 const commands = new Collection();
