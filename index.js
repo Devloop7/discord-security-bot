@@ -29,6 +29,10 @@ const modules = [
   require('./src/protection/antiraid'),
   require('./src/commands'),
   require('./src/tickets/interactions'),
+  require('./src/embeds/interactions'),
+  require('./src/autopost'),
+  require('./src/autoresponder/events'),
+  require('./src/welcome/events'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { logger.error('[load]', e.message); }

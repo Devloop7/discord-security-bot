@@ -19,6 +19,10 @@ const commandModules = [
   require('./embed'),
   require('./say'),
   require('./embededit'),
+  require('./embedbuilder'),
+  require('./autopost'),
+  require('./autoresponder'),
+  require('./welcome'),
 ];
 
 const commands = new Collection();
