@@ -40,7 +40,7 @@ function register(client) {
       await cmd.execute(interaction);
     } catch (err) {
       logger.error('[command]', err.message);
-      if (!interaction.replied) interaction.reply({ content: '⚠️ Command failed.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      if (!interaction.replied && !interaction.deferred) interaction.reply({ content: '⚠️ Command failed.', flags: MessageFlags.Ephemeral }).catch(() => {});
     }
   });
 }
