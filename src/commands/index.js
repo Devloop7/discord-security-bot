@@ -14,6 +14,7 @@ const commandModules = [
   require('./note'),
   require('./warnings'),
   require('./clearwarnings'),
+  require('./clearstrikes'),
   require('./ticket'),
   require('./embed'),
   require('./say'),

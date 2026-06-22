@@ -6,6 +6,7 @@ const { containsBadWord } = require('./normalize');
 const { nextTimeout } = require('../core/escalate');
 const strikes = require('../core/strikes');
 const modlog = require('../core/modlog');
+const actioned = require('./actioned');
 const config = require('../../config');
 const logger = require('../core/logger');
 
@@ -15,10 +16,11 @@ function register(client) {
   client.on(Events.MessageCreate, async (msg) => {
     try {
       if (msg.author.bot || !msg.guild || !msg.content) return;
-      if (!containsBadWord(msg.content, words)) return;
+      if (!containsBadWord(msg.content, words, config.profanity.whitelist || [])) return;
+      if (!actioned.claim(msg.id)) return;
 
       await msg.delete().catch(() => {});
-      const count = strikes.add(msg.author.id, 'profanity');
+      const count = strikes.add(msg.author.id, 'profanity', (config.profanity.strikeDecayDays || 0) * 86400000);
       const ms = nextTimeout(count, config.profanity.timeoutSteps);
 
       let action = 'warned';

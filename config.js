@@ -16,10 +16,13 @@ module.exports = {
     timeoutSteps: ["10m", "1h", "12h", "1d"], // mute lengths for repeat link offenders
     banScamLinks: true,   // known scam/phishing/IP-grabber links = INSTANT BAN (genuinely dangerous)
     blockInvites: true,   // treat discord.gg invites as a link offense
+    strikeDecayDays: 30,  // strikes older than this many days reset
   },
 
   profanity: {
     timeoutSteps: ["5m", "1h", "1d"], // escalating mute lengths per offense
+    strikeDecayDays: 30,  // strikes older than this many days reset
+    whitelist: [],        // words that look like bad words but are allowed
   },
 
   spam: {

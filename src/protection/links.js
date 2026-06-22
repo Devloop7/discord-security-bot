@@ -7,6 +7,7 @@ const { canPostLinks } = require('../core/whitelist');
 const { nextTimeout } = require('../core/escalate');
 const strikes = require('../core/strikes');
 const modlog = require('../core/modlog');
+const actioned = require('./actioned');
 const config = require('../../config');
 const logger = require('../core/logger');
 
@@ -29,6 +30,7 @@ function register(client) {
       const allDomainsAllowed = domains.length > 0 && domains.every((d) => config.link.allowedDomains.includes(d));
       if (!invite && allDomainsAllowed) return;
       if (canPostLinks(msg.member, msg.channel.id)) return;
+      if (!actioned.claim(msg.id)) return;
 
       await msg.delete().catch(() => {});
 
@@ -48,7 +50,7 @@ function register(client) {
 
       // Normal (non-dangerous) link → NEVER auto-ban.
       // 1st offense = warning only; repeats = escalating mute. Ban manually if it persists.
-      const count = strikes.add(msg.author.id, 'link');
+      const count = strikes.add(msg.author.id, 'link', (config.link.strikeDecayDays || 0) * 86400000);
       const content = invite ? 'Discord invite' : domains.join(', ');
 
       if (count <= 1) {
