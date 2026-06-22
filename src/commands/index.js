@@ -48,6 +48,8 @@ const commandModules = [
   require('./logging'),
   // Phase E — automod config
   require('./automod'),
+  // Phase F — invite tracker
+  require('./invites'),
 ];
 
 const commands = new Collection();
