@@ -8,7 +8,17 @@ const DEFAULTS = {
   invites: { enabled: false, logChannelId: null, fakeAgeDays: 7, rewards: [] },
   leveling: { enabled: false, announceChannelId: null, rate: 1, cooldownSec: 60, noXpChannels: [], levelRoles: [] },
   logging: { channelId: null, events: {}, channelOverrides: {} },
-  automod: { caps: false, emojiSpam: false, dupText: false },
+  automod: {
+    timeoutSteps: ['5m', '1h', '1d'], strikeDecayDays: 30,
+    whitelistRoleIds: [], ignoredChannelIds: [],
+    caps: { enabled: false, minLength: 10, percent: 70 },
+    mentions: { enabled: false, max: 5 },
+    emoji: { enabled: false, max: 8 },
+    duplicate: { enabled: false, windowSec: 30 },
+    flood: { enabled: false, max: 6, windowSec: 5 },
+    regex: { enabled: false, patterns: [] },
+    nsfwLinks: { enabled: false },
+  },
   reactionRoles: {}, autoresponders: [],
   suggestions: { channelId: null },
 };

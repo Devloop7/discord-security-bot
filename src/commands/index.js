@@ -46,6 +46,8 @@ const commandModules = [
   // Phase C — reaction roles
   require('./reactionroles'),
   require('./logging'),
+  // Phase E — automod config
+  require('./automod'),
 ];
 
 const commands = new Collection();

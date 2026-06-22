@@ -26,6 +26,7 @@ const modules = [
   require('./src/protection/profanity'),
   require('./src/protection/links'),
   require('./src/protection/spam'),
+  require('./src/protection/automod'),
   require('./src/protection/antinuke'),
   require('./src/protection/webhooks'),
   require('./src/protection/antibot'),
