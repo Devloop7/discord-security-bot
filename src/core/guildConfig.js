@@ -22,6 +22,7 @@ const DEFAULTS = {
   reactionRoles: {}, autoresponders: [],
   suggestions: { channelId: null },
   permissions: { commandOverrides: {}, staffLevels: { mod: [], admin: [] } },
+  autopost: { timezone: 'Asia/Jerusalem' },
 };
 
 function all() { return store.read(FILE, {}); }

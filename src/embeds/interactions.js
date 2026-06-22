@@ -105,6 +105,7 @@ function rebuildComponents(draft) {
   const row4 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('eb:send').setLabel('Send').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('eb:cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('eb:savedesign').setLabel('💾 Save as design').setStyle(ButtonStyle.Primary),
   );
 
   return [row1, row2, row3, row4];
@@ -238,6 +239,56 @@ function register(client) {
       if (interaction.isButton() && id === 'eb:cancel') {
         clearDraft(interaction.user.id);
         return interaction.update({ content: '❌ Cancelled.', embeds: [], components: [] });
+      }
+
+      // --- Save as design: open a modal asking for a name --------------------
+      if (interaction.isButton() && id === 'eb:savedesign') {
+        const input = new TextInputBuilder()
+          .setCustomId('name')
+          .setLabel('Design name')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(80);
+        const modal = new ModalBuilder()
+          .setCustomId('eb:savemodal')
+          .setTitle('Save design as…')
+          .addComponents(new ActionRowBuilder().addComponents(input));
+        return interaction.showModal(modal);
+      }
+
+      // --- Save modal submit: persist the current draft as a named design ----
+      if (interaction.isModalSubmit() && id === 'eb:savemodal') {
+        const draft = getDraft(interaction.user.id);
+        if (!draft) {
+          return interaction.reply({
+            content: '⛔ Your draft expired. Run /embedbuilder again.',
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+
+        const { embed, error } = buildEmbed({
+          title: draft.title,
+          description: draft.description,
+          color: draft.color,
+          image: draft.image,
+          thumbnail: draft.thumbnail,
+          footer: draft.footer,
+          author_name: draft.author_name,
+        });
+        if (error) {
+          return interaction.reply({ content: `⛔ ${error}`, flags: MessageFlags.Ephemeral });
+        }
+
+        const name = interaction.fields.getTextInputValue('name').trim();
+        if (!name) {
+          return interaction.reply({ content: '⛔ Name required.', flags: MessageFlags.Ephemeral });
+        }
+
+        require('../autopost/designs').save(interaction.guildId, name, embed.toJSON());
+        return interaction.reply({
+          content: `✅ Saved design '${name}'. Schedule it with /autopost create design:${name}`,
+          flags: MessageFlags.Ephemeral,
+        });
       }
     } catch (e) {
       logger.error('[embedbuilder:interaction]', e.message);

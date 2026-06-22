@@ -8,6 +8,8 @@ const { EmbedBuilder } = require('discord.js');
 const store = require('../core/store');
 const scheduler = require('../core/scheduler');
 const logger = require('../core/logger');
+const { nextRunAt } = require('./schedule');
+const { buildEmbed } = require('../embeds/build');
 
 const FILE = 'autoposts.json';
 
@@ -55,6 +57,31 @@ function patchDef(id, patch) {
   }, {});
 }
 
+// ── new-style post rendering ─────────────────────────────────────────────────
+// Render + send a NEW-style def's message (payload-based) into `channel`.
+// Returns the sent message. Mentions are suppressed unless an explicit
+// mentionRoleId is set, which is then whitelisted via allowedMentions.
+async function sendPost(channel, def) {
+  const p = def.payload || {};
+  let payload;
+  if (p.embed) payload = { embeds: [p.embed] };
+  else if (p.kind === 'embed' || p.title) {
+    const { embed } = buildEmbed({ title: p.title, description: p.content });
+    payload = embed ? { embeds: [embed] } : { content: String(p.content || '').slice(0, 2000) };
+  } else {
+    payload = { content: String(p.content || '').slice(0, 2000) };
+  }
+  const allowed = { parse: [] };
+  if (p.mentionRoleId) {
+    payload.content = ('<@&' + p.mentionRoleId + '> ' + (payload.content || '')).trim();
+    allowed.roles = [p.mentionRoleId];
+  }
+  payload.allowedMentions = allowed;
+  const sent = await channel.send(payload);
+  if (p.pin) await sent.pin().catch(() => {});
+  return sent;
+}
+
 // ── register the scheduler handler ───────────────────────────────────────────
 function register(client) {
   scheduler.register('autopost', async (data, c) => {
@@ -67,12 +94,38 @@ function register(client) {
         (await c.channels.fetch(def.channelId).catch(() => null));
       if (!channel || typeof channel.send !== 'function') {
         logger.warn(`[autopost] channel ${def.channelId} not found for ${def.id}`);
-        // Channel gone for a 'once' post — clean it up; recurring will retry next cycle.
+        // Channel temporarily/permanently gone: re-arm recurring posts so a transient
+        // fetch blip can't delete them; only drop a completed/expired one-off.
+        if (def.schedule) {
+          if (def.schedule.type === 'once') { await deleteDef(def.id); return; }
+          const next = nextRunAt(def.schedule, Date.now());
+          if (next) {
+            const jobId = scheduler.schedule('autopost', next, { id: def.id });
+            await patchDef(def.id, { nextAt: next, jobId });
+          } else {
+            await deleteDef(def.id);
+          }
+          return;
+        }
         if (def.every === 'once') await deleteDef(def.id);
         else await rescheduleNext(def);
         return;
       }
 
+      // NEW-style def: payload + structured schedule. Render, send, then
+      // re-arm (or remove on a completed 'once'). Legacy path is below.
+      if (def.schedule) {
+        if (def.enabled === false) return; // paused (shouldn't have a job, guard anyway)
+        await sendPost(channel, def);
+        if (def.schedule.type === 'once') { await deleteDef(def.id); return; }
+        const next = nextRunAt(def.schedule, Date.now());
+        if (!next) { await deleteDef(def.id); return; }
+        const jobId = scheduler.schedule('autopost', next, { id: def.id });
+        await patchDef(def.id, { nextAt: next, jobId });
+        return;
+      }
+
+      // LEGACY-style def: title/message + every-based recurrence.
       const payload = def.title
         ? { embeds: [new EmbedBuilder().setTitle(String(def.title).slice(0, 256)).setDescription(String(def.message).slice(0, 4096)).setColor(0x5865F2).setTimestamp()] }
         : { content: String(def.message).slice(0, 2000) };
@@ -112,5 +165,6 @@ module.exports = {
   saveDef,
   deleteDef,
   patchDef,
+  sendPost,
   FILE,
 };

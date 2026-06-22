@@ -42,11 +42,28 @@ function cancel(id) {
   saveJobs(jobs().filter((j) => j.id !== id));
 }
 
+let sweepTimer = null;
+
+// Periodic safety net: run overdue jobs and arm any job that has now come within the
+// setTimeout window. arm() skips delays > ~24.8d, so long schedules (e.g. monthly) would
+// otherwise only be picked up on reboot — this sweep makes them fire without one.
+function sweep() {
+  const now = Date.now();
+  for (const job of jobs()) {
+    if (timers.has(job.id)) continue; // already armed
+    if (job.runAt <= now) run(job); else arm(job);
+  }
+}
+
 async function init(c) {
   client = c;
   const now = Date.now();
   for (const job of jobs()) {
     if (job.runAt <= now) await run(job); else arm(job);
+  }
+  if (!sweepTimer) {
+    sweepTimer = setInterval(sweep, 6 * 3_600_000); // every 6h
+    if (sweepTimer.unref) sweepTimer.unref();
   }
 }
 
@@ -54,4 +71,4 @@ function hasJob(type, predicate) {
   return jobs().some((j) => j.type === type && (!predicate || predicate(j.data)));
 }
 
-module.exports = { register, schedule, cancel, init, hasJob, jobs };
+module.exports = { register, schedule, cancel, init, hasJob, jobs, sweep };
