@@ -45,6 +45,7 @@ const commandModules = [
   require('./suggestions'),
   // Phase C — reaction roles
   require('./reactionroles'),
+  require('./logging'),
 ];
 
 const commands = new Collection();

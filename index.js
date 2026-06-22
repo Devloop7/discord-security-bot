@@ -14,8 +14,11 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,     // privileged
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildWebhooks,
+    GatewayIntentBits.GuildVoiceStates,  // voice activity logging
+    GatewayIntentBits.GuildExpressions,  // emoji/sticker logging
+    GatewayIntentBits.GuildInvites,      // invite-create logging + (Phase F) tracker
   ],
-  partials: [Partials.Channel, Partials.GuildMember],
+  partials: [Partials.Channel, Partials.GuildMember, Partials.Message, Partials.Reaction],
 });
 
 // Protection + command modules are registered here as later phases add them.
@@ -36,6 +39,7 @@ const modules = [
   require('./src/autopost'),
   require('./src/autoresponder/events'),
   require('./src/welcome/events'),
+  require('./src/logging'),
 ];
 for (const mod of modules) {
   try { mod.register(client); } catch (e) { logger.error('[load]', e.message); }

@@ -7,7 +7,7 @@ const DEFAULTS = {
   welcome: { enabled: false, channelId: null, leaveChannelId: null, text: 'Welcome {user}!', leaveText: '{username} left.', card: false, background: null, autoRoleIds: [] },
   invites: { enabled: false, logChannelId: null, fakeAgeDays: 7, rewards: [] },
   leveling: { enabled: false, announceChannelId: null, rate: 1, cooldownSec: 60, noXpChannels: [], levelRoles: [] },
-  logging: { channelId: null, events: {} },
+  logging: { channelId: null, events: {}, channelOverrides: {} },
   automod: { caps: false, emojiSpam: false, dupText: false },
   reactionRoles: {}, autoresponders: [],
   suggestions: { channelId: null },
