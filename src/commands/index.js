@@ -23,6 +23,15 @@ const commandModules = [
   require('./autopost'),
   require('./autoresponder'),
   require('./welcome'),
+  // Phase A — moderation completion
+  require('./tempban'),
+  require('./unban'),
+  require('./softban'),
+  require('./tempmute'),
+  require('./purge'),
+  require('./slowmode'),
+  require('./role'),
+  require('./nick'),
 ];
 
 const commands = new Collection();
