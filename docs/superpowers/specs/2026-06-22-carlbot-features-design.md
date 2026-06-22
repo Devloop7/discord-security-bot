@@ -227,6 +227,15 @@ Unify command authorization:
 4. Commit per phase, push to `master` → Railway auto-deploys. Report the phase result; await go-ahead implicitly
    per the approved A→G order (user gets an update after each phase).
 
+## Status — COMPLETE (2026-06-22)
+
+All 7 phases shipped to `master` and deployed (Railway). 110 unit tests passing; 42 slash commands.
+- Phase A `e8b4e4b` · Phase B `aa04caa` · Phase C `2290bed` · Phase D `d212886`
+- Phase E `cf1bff1` · Phase F `d7ed211` · Phase G `1d487f6`
+
+Each new module is wired into `index.js` (modules) / `commandModules`, gated through the unified
+`access.canRun` dispatcher, and persists to JSON on the Railway Volume.
+
 ## Out of scope (this spec)
 
 Web dashboard, PostgreSQL/Prisma, Docker, multi-shard 100k-server scaling, welcome image-card rendering
