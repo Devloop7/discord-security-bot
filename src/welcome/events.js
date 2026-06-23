@@ -4,6 +4,7 @@
 
 const { Events } = require('discord.js');
 const guildConfig = require('../core/guildConfig');
+const { baseEmbed, COLORS, EMOJI } = require('../ui/theme');
 const logger = require('../core/logger');
 
 /**
@@ -41,13 +42,23 @@ function register(client) {
       const cfg = guildConfig.get(guild.id).welcome;
       if (!cfg.enabled) return;
 
-      // Welcome message.
+      // Welcome message (branded embed + a real ping in the content).
       if (cfg.channelId && cfg.text) {
         const ch = await resolveChannel(guild, cfg.channelId);
         if (ch && typeof ch.send === 'function') {
-          const content = substitute(cfg.text, { member, guild });
           try {
-            await ch.send({ content, allowedMentions: { parse: ['users'] } });
+            const avatar = member.user?.displayAvatarURL?.({ size: 256 });
+            const embed = baseEmbed(guild, { color: COLORS.brand })
+              .setAuthor({ name: `Welcome to ${guild.name}`, iconURL: guild.iconURL?.({ size: 128 }) || undefined })
+              .setTitle(`${EMOJI.wave}  Welcome, ${member.user?.username || 'friend'}!`)
+              .setDescription(substitute(cfg.text, { member, guild }))
+              .addFields({ name: `${EMOJI.owner} Member`, value: `#${guild.memberCount}`, inline: true });
+            if (avatar) embed.setThumbnail(avatar);
+            await ch.send({
+              content: `<@${member.id}>`,
+              embeds: [embed],
+              allowedMentions: { users: [member.id] },
+            });
           } catch (e) {
             logger.error('[welcome:add:send]', e.message);
           }
@@ -78,9 +89,13 @@ function register(client) {
       const ch = await resolveChannel(guild, cfg.leaveChannelId);
       if (ch && typeof ch.send === 'function') {
         // member may be partial on remove — substitute handles fallbacks.
-        const content = substitute(cfg.leaveText, { member, guild });
         try {
-          await ch.send({ content, allowedMentions: { parse: [] } });
+          const avatar = member.user?.displayAvatarURL?.({ size: 256 });
+          const embed = baseEmbed(guild, { color: COLORS.muted })
+            .setTitle(`${EMOJI.wave}  Goodbye`)
+            .setDescription(substitute(cfg.leaveText, { member, guild }));
+          if (avatar) embed.setThumbnail(avatar);
+          await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
         } catch (e) {
           logger.error('[welcome:remove:send]', e.message);
         }

@@ -1,6 +1,7 @@
 // src/embeds/build.js — shared embed construction + validation + perm preflight.
 const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
-const BRAND = 0x5865F2;
+const { BRAND } = require('../ui/theme');
+const { normalizeText } = require('../core/format');
 
 function parseColor(input) {
   if (!input) return BRAND;
@@ -14,7 +15,12 @@ function buildEmbed(opts) {
   const embed = new EmbedBuilder();
   let has = false;
   if (opts.title) { embed.setTitle(String(opts.title).slice(0, 256)); has = true; }
-  if (opts.description) { embed.setDescription(String(opts.description).replace(/\\n/g, '\n').slice(0, 4096)); has = true; }
+  if (opts.description) {
+    // Clean up pasted content (smart quotes, bullets, HTML, blank-line walls)
+    // before it lands in the embed so it reads as professional formatting.
+    const desc = normalizeText(String(opts.description).replace(/\\n/g, '\n')).slice(0, 4096);
+    if (desc) { embed.setDescription(desc); has = true; }
+  }
   if (opts.author_name) embed.setAuthor({ name: String(opts.author_name).slice(0, 256) });
   if (opts.footer) embed.setFooter({ text: String(opts.footer).slice(0, 2048) });
   if (opts.image) { if (!isUrl(opts.image)) return { error: 'Image must be a valid http(s) URL.' }; embed.setImage(opts.image); }

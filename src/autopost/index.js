@@ -4,12 +4,11 @@
 //   { id, guildId, channelId, title|null, message, every, nextAt, jobId }
 'use strict';
 
-const { EmbedBuilder } = require('discord.js');
 const store = require('../core/store');
 const scheduler = require('../core/scheduler');
 const logger = require('../core/logger');
 const { nextRunAt } = require('./schedule');
-const { buildEmbed } = require('../embeds/build');
+const { formatToEmbeds, formatToText } = require('../core/format');
 
 const FILE = 'autoposts.json';
 
@@ -64,12 +63,18 @@ function patchDef(id, patch) {
 async function sendPost(channel, def) {
   const p = def.payload || {};
   let payload;
-  if (p.embed) payload = { embeds: [p.embed] };
-  else if (p.kind === 'embed' || p.title) {
-    const { embed } = buildEmbed({ title: p.title, description: p.content });
-    payload = embed ? { embeds: [embed] } : { content: String(p.content || '').slice(0, 2000) };
+  if (p.embed) {
+    // A pre-built saved design — send as-is.
+    payload = { embeds: [p.embed] };
+  } else if (p.raw) {
+    // Opt-out: send normalized plain text (no auto-embed).
+    payload = { content: formatToText(p.content).slice(0, 2000) || '(empty post)' };
   } else {
-    payload = { content: String(p.content || '').slice(0, 2000) };
+    // Smart Formatter: turn the pasted content into structured embed(s).
+    const embeds = formatToEmbeds(p.content, { scope: channel, title: p.title || undefined });
+    payload = embeds.length
+      ? { embeds }
+      : { content: formatToText(p.content).slice(0, 2000) || '(empty post)' };
   }
   const allowed = { parse: [] };
   if (p.mentionRoleId) {
@@ -126,9 +131,11 @@ function register(client) {
       }
 
       // LEGACY-style def: title/message + every-based recurrence.
-      const payload = def.title
-        ? { embeds: [new EmbedBuilder().setTitle(String(def.title).slice(0, 256)).setDescription(String(def.message).slice(0, 4096)).setColor(0x5865F2).setTimestamp()] }
-        : { content: String(def.message).slice(0, 2000) };
+      // Run it through the Smart Formatter too so old posts also look premium.
+      const legacyEmbeds = formatToEmbeds(def.message, { scope: channel, title: def.title || undefined });
+      const payload = legacyEmbeds.length
+        ? { embeds: legacyEmbeds }
+        : { content: formatToText(def.message).slice(0, 2000) || '(empty post)' };
 
       await channel.send({ ...payload, allowedMentions: { parse: [] } });
 

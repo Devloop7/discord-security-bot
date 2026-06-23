@@ -1,94 +1,79 @@
-// src/tickets/actions.js — ticket lifecycle actions: open, claim, unclaim, pin, setPriority.
+// src/tickets/actions.js — ticket lifecycle actions.
+//
+// Every card is re-rendered from the ticket record (see ./embeds) instead of
+// being patched field-by-field, so the visuals stay consistent through claim →
+// priority → close → reopen. Adds full Add User / Remove User / Transcript
+// support and a confirmation step before closing.
 'use strict';
 
 const {
   ChannelType,
   PermissionFlagsBits,
-  EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   MessageFlags,
 } = require('discord.js');
+
 const scheduler = require('../core/scheduler');
-
-// ---------------------------------------------------------------------------
-// 2FA error helper
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true when the Discord API error indicates the server requires 2FA
- * for moderation actions and the bot owner hasn't enabled it.
- * Primary code: 60003 (MFA required).  Also catches 40002 and message-based checks.
- */
-function isTwoFactorError(e) {
-  return e && (
-    e.code === 60003 ||
-    e.code === 40002 ||
-    /two[- ]?factor|2fa/i.test(String(e.message || ''))
-  );
-}
-
-const TWO_FA_MSG =
-  "⚠️ I couldn't create the ticket channel because this server **requires 2FA for moderation**. " +
-  'The account that OWNS the bot must enable Two-Factor Authentication ' +
-  '(Discord → User Settings → My Account → Enable Two-Factor Auth). ' +
-  'After enabling it, try again.';
-
+const logger = require('../core/logger');
+const { COLORS, EMOJI, PRIORITY } = require('../ui/theme');
 const {
   getConfig, setConfig, nextCounter,
   getTicket, createTicket, updateTicket, openCount,
 } = require('../core/ticketStore');
-const { PRIORITY, COLORS, controlRow, closedRow } = require('./constants');
+const {
+  controlRows, closedRows, closeConfirmRow, addUserRow, removeUserRow,
+} = require('./constants');
+const {
+  buildTicketEmbed, noticeEmbed, confirmCloseEmbed, closedEmbed,
+  dmClosedEmbed, deleteEmbed, transcriptEmbed,
+} = require('./embeds');
 const { isStaff, canManageTicket, canCloseTicket } = require('./permissions');
 const { generateHtml } = require('./transcript');
 const { logTicketEvent } = require('./log');
-const logger = require('../core/logger');
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ── 2FA helper ───────────────────────────────────────────────────────────────
+function isTwoFactorError(e) {
+  return e && (e.code === 60003 || e.code === 40002 || /two[- ]?factor|2fa/i.test(String(e.message || '')));
+}
+const TWO_FA_MSG =
+  "⚠️ I couldn't create the ticket channel because this server **requires 2FA for moderation**. " +
+  'The account that OWNS the bot must enable Two-Factor Authentication ' +
+  '(Discord → User Settings → My Account → Enable Two-Factor Auth). Then try again.';
 
-/** Reply ephemeral text on an already-deferred or fresh interaction. */
+// ── small helpers ────────────────────────────────────────────────────────────
 async function replyEphemeral(interaction, content) {
-  if (interaction.deferred || interaction.replied) {
-    return interaction.editReply({ content });
-  }
-  return interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  try {
+    if (interaction.deferred || interaction.replied) {
+      return await interaction.editReply({ content, embeds: [], components: [] });
+    }
+    return await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  } catch { /* interaction expired — ignore */ }
 }
 
-/**
- * Safely fetch a message from a channel by id.
- * Returns null if not found / any error.
- */
 async function fetchMessage(channel, msgId) {
   if (!msgId || !channel) return null;
-  try {
-    return await channel.messages.fetch(msgId);
-  } catch {
-    return null;
-  }
+  try { return await channel.messages.fetch(msgId); } catch { return null; }
 }
 
-/**
- * Rebuild the fields array of the welcome embed, replacing the value of the
- * field whose name matches `fieldName` with `newValue`.
- * Returns a new array (does not mutate).
- */
-function replaceField(fields, fieldName, newValue) {
-  return fields.map((f) =>
-    f.name === fieldName ? { ...f, value: newValue } : { ...f },
-  );
+const PERMS_VIEW = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.AttachFiles,
+  PermissionFlagsBits.ReadMessageHistory,
+];
+
+// Re-render the pinned welcome card from current ticket state.
+async function rerenderWelcome(channel, ticket, cfg) {
+  const welcomeMsg = await fetchMessage(channel, ticket.welcomeMessageId);
+  if (!welcomeMsg) return;
+  const opener = await channel.client.users.fetch(ticket.userId).catch(() => null);
+  const embed = buildTicketEmbed(channel, ticket, { opener });
+  const components = ticket.status === 'closed'
+    ? []
+    : controlRows({ claimed: !!ticket.claimedBy, enablePriority: cfg.enablePriority });
+  await welcomeMsg.edit({ embeds: [embed], components }).catch((e) => logger.warn('[ticket:rerender]', e.message));
 }
 
-// ---------------------------------------------------------------------------
-// openTicket
-// ---------------------------------------------------------------------------
-
-/**
- * Called from the create_ticket_modal submit.
- * Creates the ticket channel, welcome message, and persists the record.
- */
+// ── openTicket ───────────────────────────────────────────────────────────────
 async function openTicket(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -96,625 +81,407 @@ async function openTicket(interaction) {
   const cfg = getConfig(guildId);
   const opener = member;
 
-  // Re-check per-user open-ticket limit.
   if (openCount(guildId, opener.id) >= cfg.maxTicketsPerUser) {
-    return interaction.editReply(
-      `You've reached the max of ${cfg.maxTicketsPerUser} open tickets.`,
-    );
+    return interaction.editReply(`You've reached the max of ${cfg.maxTicketsPerUser} open tickets.`);
   }
 
   const reason = interaction.fields.getTextInputValue('reason');
-  const num = nextCounter(guildId); // e.g. "001"
+  const num = nextCounter(guildId);
 
-  // ── Resolve or create the ticket category ──────────────────────────────
+  // Resolve / create category.
   let { categoryId } = cfg;
-
   if (!categoryId) {
-    // Try to find an existing category whose name contains "tickets".
     const found = guild.channels.cache.find(
-      (c) =>
-        c.type === ChannelType.GuildCategory &&
-        c.name.toLowerCase().includes('tickets'),
+      (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase().includes('tickets'),
     );
-
-    if (found) {
-      categoryId = found.id;
-    } else {
-      // Create one.
+    if (found) categoryId = found.id;
+    else {
       const created = await guild.channels.create({
-        name: 'Tickets',
-        type: ChannelType.GuildCategory,
-        permissionOverwrites: [
-          { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-        ],
+        name: 'Tickets', type: ChannelType.GuildCategory,
+        permissionOverwrites: [{ id: guild.id, deny: [PermissionFlagsBits.ViewChannel] }],
       });
       categoryId = created.id;
     }
-
     setConfig(guildId, { categoryId });
   }
 
-  // ── Create the ticket channel ──────────────────────────────────────────
   const permissionOverwrites = [
     { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-    {
-      id: opener.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.AttachFiles,
-        PermissionFlagsBits.ReadMessageHistory,
-      ],
-    },
+    { id: opener.id, allow: PERMS_VIEW },
   ];
-
-  if (cfg.staffRoleId) {
-    permissionOverwrites.push({
-      id: cfg.staffRoleId,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.AttachFiles,
-        PermissionFlagsBits.ReadMessageHistory,
-      ],
-    });
-  }
+  if (cfg.staffRoleId) permissionOverwrites.push({ id: cfg.staffRoleId, allow: PERMS_VIEW });
 
   let channel;
   try {
     channel = await guild.channels.create({
-      name: `ticket-${num}`,
-      type: ChannelType.GuildText,
-      parent: categoryId,
-      permissionOverwrites,
+      name: `ticket-${num}`, type: ChannelType.GuildText, parent: categoryId, permissionOverwrites,
     });
   } catch (err) {
     logger.error('[ticket:open] channel create failed:', err.message);
-    if (isTwoFactorError(err)) {
-      return interaction.editReply(TWO_FA_MSG);
-    }
-    return interaction.editReply('⚠️ Failed to create the ticket channel. Please try again later.');
+    return interaction.editReply(isTwoFactorError(err) ? TWO_FA_MSG : '⚠️ Failed to create the ticket channel. Please try again later.');
   }
 
-  // ── Build welcome embed ────────────────────────────────────────────────
-  const createdTs = Math.floor(Date.now() / 1000);
-  const welcome = new EmbedBuilder()
-    .setTitle(`Ticket #${num}`)
-    .setDescription(
-      `${opener}, thanks for creating a ticket!\n\n` +
-      `**Reason:** ${reason}\n` +
-      `**Priority:** ${PRIORITY.none.emoji} ${PRIORITY.none.label}`,
-    )
-    .setColor(PRIORITY.none.color)
-    .addFields(
-      { name: 'Status',     value: '🟢 Open',       inline: true },
-      { name: 'Claimed By', value: 'Not claimed',    inline: true },
-      { name: 'Created',    value: `<t:${createdTs}:R>`, inline: true },
-    );
+  const ticket = {
+    userId: opener.id, guildId, reason, priority: 'none', number: num,
+    createdAt: Date.now(), status: 'open', welcomeMessageId: null, claimMsgId: null,
+  };
 
-  // ── Send welcome message ───────────────────────────────────────────────
-  const mentionContent = [
-    `${opener}`,
-    cfg.staffRoleId ? `<@&${cfg.staffRoleId}>` : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const embed = buildTicketEmbed(channel, ticket, { opener });
+  const mentionContent = [`<@${opener.id}>`, cfg.staffRoleId ? `<@&${cfg.staffRoleId}>` : '']
+    .filter(Boolean).join(' ');
 
   const sent = await channel.send({
     content: mentionContent,
-    embeds: [welcome],
-    components: [controlRow({ claimed: false, enablePriority: cfg.enablePriority })],
+    embeds: [embed],
+    components: controlRows({ claimed: false, enablePriority: cfg.enablePriority }),
+    allowedMentions: { users: [opener.id], roles: cfg.staffRoleId ? [cfg.staffRoleId] : [] },
   });
-
   await sent.pin().catch(() => {});
 
-  // ── Persist ticket record ──────────────────────────────────────────────
-  createTicket(channel.id, {
-    userId: opener.id,
-    guildId,
-    reason,
-    priority: 'none',
-    number: num,
-    welcomeMessageId: sent.id,
-    claimMsgId: null,
-  });
+  createTicket(channel.id, { ...ticket, welcomeMessageId: sent.id });
 
-  // ── Log ────────────────────────────────────────────────────────────────
   await logTicketEvent(guild, 'open', {
     fields: [
-      { name: 'Ticket',  value: `#${num}`,            inline: true },
-      { name: 'Creator', value: `<@${opener.id}>`,    inline: true },
-      { name: 'Channel', value: `<#${channel.id}>`,   inline: true },
-      { name: 'Reason',  value: reason.slice(0, 1000) },
+      { name: `${EMOJI.ticket} Ticket`, value: `#${num}`, inline: true },
+      { name: `${EMOJI.owner} Creator`, value: `<@${opener.id}>`, inline: true },
+      { name: 'Channel', value: `<#${channel.id}>`, inline: true },
+      { name: `${EMOJI.reason} Reason`, value: reason.slice(0, 1000) },
     ],
   });
 
-  await interaction.editReply(`🎫 Ticket created: <#${channel.id}>`);
+  await interaction.editReply(`${EMOJI.ticket} Your ticket is ready: <#${channel.id}>`);
 }
 
-// ---------------------------------------------------------------------------
-// claim
-// ---------------------------------------------------------------------------
-
+// ── claim / unclaim ──────────────────────────────────────────────────────────
 async function claim(interaction) {
   const { channelId, guildId, guild, member, channel } = interaction;
-
   const ticket = getTicket(channelId);
   if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
   if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
-  if (ticket.claimedBy) {
-    return replyEphemeral(interaction, `Already claimed by <@${ticket.claimedBy}>.`);
-  }
+  if (ticket.claimedBy) return replyEphemeral(interaction, `Already claimed by <@${ticket.claimedBy}>.`);
 
   const cfg = getConfig(guildId);
-  updateTicket(channelId, { claimedBy: member.id, claimedAt: Date.now() });
+  const updated = updateTicket(channelId, { claimedBy: member.id, claimedAt: Date.now() });
+  await rerenderWelcome(channel, updated, cfg);
 
-  // Edit welcome message — replace "Claimed By" field and update control row.
-  const welcomeMsg = await fetchMessage(channel, ticket.welcomeMessageId);
-  if (welcomeMsg?.embeds?.[0]) {
-    try {
-      const oldEmbed = welcomeMsg.embeds[0];
-      const newFields = replaceField(
-        oldEmbed.fields,
-        'Claimed By',
-        `<@${member.id}>`,
-      );
-      const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(newFields);
-      await welcomeMsg.edit({
-        embeds: [updatedEmbed],
-        components: [controlRow({ claimed: true, enablePriority: cfg.enablePriority })],
-      });
-    } catch (e) {
-      logger.warn('[ticket:claim] could not edit welcome msg:', e.message);
-    }
-  }
+  await channel.send({ embeds: [noticeEmbed(channel, {
+    color: COLORS.brand,
+    body: `${EMOJI.claim}  <@${member.id}> claimed this ticket and will be assisting you.`,
+  })] }).catch(() => {});
 
-  // Post / refresh claim status message.
-  const claimEmbed = new EmbedBuilder()
-    .setTitle('Ticket Claimed')
-    .setDescription(`🎉 <@${member.id}> has claimed this ticket!`)
-    .setColor(COLORS.claim);
-
-  const unclaimRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('ticket_unclaim')
-      .setLabel('Unclaim')
-      .setEmoji('🔓')
-      .setStyle(ButtonStyle.Secondary),
-  );
-
-  const existingClaimMsg = await fetchMessage(channel, ticket.claimMsgId);
-  if (existingClaimMsg) {
-    await existingClaimMsg.edit({ embeds: [claimEmbed], components: [unclaimRow] }).catch(() => {});
-  } else {
-    const sent = await channel.send({ embeds: [claimEmbed], components: [unclaimRow] }).catch(() => null);
-    if (sent) updateTicket(channelId, { claimMsgId: sent.id });
-  }
-
-  await interaction.reply({ content: '✅ You claimed this ticket.', flags: MessageFlags.Ephemeral });
-
-  const ticketNum = ticket.number || channel.name;
+  await replyEphemeral(interaction, `${EMOJI.success} You claimed this ticket.`);
   await logTicketEvent(guild, 'claim', {
     fields: [
-      { name: 'Ticket',     value: `#${ticketNum}`,       inline: true },
-      { name: 'Claimed by', value: `<@${member.id}>`,     inline: true },
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Claimed by', value: `<@${member.id}>`, inline: true },
     ],
   });
 }
 
-// ---------------------------------------------------------------------------
-// unclaim
-// ---------------------------------------------------------------------------
-
 async function unclaim(interaction) {
   const { channelId, guildId, guild, member, channel } = interaction;
-
   const ticket = getTicket(channelId);
   if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
-
-  // Permission: the claimer OR any staff member.
   if (member.id !== ticket.claimedBy && !isStaff(member, guildId)) {
     return replyEphemeral(interaction, '⛔ You cannot unclaim this ticket.');
   }
 
   const cfg = getConfig(guildId);
-  updateTicket(channelId, { claimedBy: null, claimedAt: null });
+  const updated = updateTicket(channelId, { claimedBy: null, claimedAt: null });
+  await rerenderWelcome(channel, updated, cfg);
 
-  // Edit welcome message — restore "Claimed By" to "Not claimed".
-  const welcomeMsg = await fetchMessage(channel, ticket.welcomeMessageId);
-  if (welcomeMsg?.embeds?.[0]) {
-    try {
-      const oldEmbed = welcomeMsg.embeds[0];
-      const newFields = replaceField(oldEmbed.fields, 'Claimed By', 'Not claimed');
-      const updatedEmbed = EmbedBuilder.from(oldEmbed).setFields(newFields);
-      await welcomeMsg.edit({
-        embeds: [updatedEmbed],
-        components: [controlRow({ claimed: false, enablePriority: cfg.enablePriority })],
-      });
-    } catch (e) {
-      logger.warn('[ticket:unclaim] could not edit welcome msg:', e.message);
-    }
-  }
+  await channel.send({ embeds: [noticeEmbed(channel, {
+    color: COLORS.warning,
+    body: `${EMOJI.unclaim}  <@${member.id}> released this ticket — it's open for any staff member.`,
+  })] }).catch(() => {});
 
-  // Edit claim status message — show unclaimed state with no action buttons.
-  const claimMsg = await fetchMessage(channel, ticket.claimMsgId);
-  if (claimMsg) {
-    const unclaimEmbed = new EmbedBuilder()
-      .setTitle('Ticket Unclaimed')
-      .setDescription(`🔓 <@${member.id}> has unclaimed this ticket!`)
-      .setColor(COLORS.unclaim);
-    await claimMsg.edit({ embeds: [unclaimEmbed], components: [] }).catch(() => {});
-  }
-
-  await interaction.reply({ content: '✅ Unclaimed.', flags: MessageFlags.Ephemeral });
-
-  const ticketNum = ticket.number || channel.name;
+  await replyEphemeral(interaction, `${EMOJI.success} Unclaimed.`);
   await logTicketEvent(guild, 'unclaim', {
     fields: [
-      { name: 'Ticket',      value: `#${ticketNum}`,      inline: true },
-      { name: 'Unclaimed by', value: `<@${member.id}>`,   inline: true },
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Unclaimed by', value: `<@${member.id}>`, inline: true },
     ],
   });
 }
 
-// ---------------------------------------------------------------------------
-// pin
-// ---------------------------------------------------------------------------
-
-async function pin(interaction) {
-  const { guildId, guild, member, channel } = interaction;
-
-  if (!canManageTicket(member, guildId)) {
-    return replyEphemeral(interaction, '⛔ Staff only.');
-  }
-
-  const ticket = getTicket(channel.id);
-  const ticketNum = ticket?.number || channel.name;
-  const currentName = channel.name;
-
-  try {
-    if (currentName.startsWith('📌 ') || currentName.startsWith('📌-')) {
-      // Already pinned — unpin.
-      // Handle both "📌 ticket-001" and "📌-ticket-001" naming variants.
-      const newName = currentName.startsWith('📌 ')
-        ? currentName.slice(2).trimStart()
-        : currentName.slice(2);
-      await channel.setName(newName);
-      await channel.edit({ position: 999 }).catch(() => {});
-      await interaction.reply({ content: '📌 Ticket unpinned.', flags: MessageFlags.Ephemeral });
-      await logTicketEvent(guild, 'unpin', {
-        fields: [{ name: 'Ticket', value: `#${ticketNum}`, inline: true }],
-      });
-    } else {
-      // Pin it.
-      await channel.setName(`📌 ${currentName}`);
-      await channel.edit({ position: 0 }).catch(() => {});
-      await interaction.reply({ content: '📌 Ticket pinned.', flags: MessageFlags.Ephemeral });
-      await logTicketEvent(guild, 'pin', {
-        fields: [{ name: 'Ticket', value: `#${ticketNum}`, inline: true }],
-      });
-    }
-  } catch (e) {
-    logger.warn('[ticket:pin] channel rename failed:', e.message);
-    // Still reply so the interaction doesn't time out.
-    await replyEphemeral(interaction, '⚠️ Could not rename the channel (rate limited?), but the action was noted.');
-  }
-}
-
-// ---------------------------------------------------------------------------
-// setPriority
-// ---------------------------------------------------------------------------
-
+// ── setPriority (from the select menu) ───────────────────────────────────────
 async function setPriority(interaction, level) {
   const { channelId, guildId, guild, member, channel } = interaction;
-
-  if (!canManageTicket(member, guildId)) {
-    return replyEphemeral(interaction, '⛔ Staff only.');
-  }
-
-  if (!PRIORITY[level]) {
-    return replyEphemeral(interaction, `⚠️ Unknown priority level: ${level}`);
-  }
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+  if (!PRIORITY[level]) return replyEphemeral(interaction, `⚠️ Unknown priority level: ${level}`);
 
   const ticket = getTicket(channelId);
   if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
 
-  updateTicket(channelId, { priority: level });
+  const cfg = getConfig(guildId);
+  const updated = updateTicket(channelId, { priority: level });
+  await rerenderWelcome(channel, updated, cfg);
 
   const p = PRIORITY[level];
+  await channel.send({ embeds: [noticeEmbed(channel, {
+    color: p.color,
+    body: `${EMOJI.priority}  Priority set to **${p.emoji} ${p.label}** by <@${member.id}>.`,
+  })] }).catch(() => {});
 
-  // Edit welcome embed — replace **Priority:** line in description and set color.
-  const welcomeMsg = await fetchMessage(channel, ticket.welcomeMessageId);
-  if (welcomeMsg?.embeds?.[0]) {
-    try {
-      const oldEmbed = welcomeMsg.embeds[0];
-      const oldDesc = oldEmbed.description || '';
-      const newDesc = oldDesc.replace(
-        /\*\*Priority:\*\*.*/,
-        `**Priority:** ${p.emoji} ${p.label}`,
-      );
-      const updatedEmbed = EmbedBuilder.from(oldEmbed)
-        .setDescription(newDesc)
-        .setColor(p.color);
-      await welcomeMsg.edit({ embeds: [updatedEmbed] });
-    } catch (e) {
-      logger.warn('[ticket:setPriority] could not edit welcome msg:', e.message);
-    }
-  }
-
-  // Post a status embed.
-  const statusEmbed = new EmbedBuilder()
-    .setTitle('Priority Updated')
-    .setDescription(`📊 Priority set to **${p.emoji} ${p.label}** by <@${member.id}>`)
-    .setColor(p.color);
-
-  await channel.send({ embeds: [statusEmbed] }).catch(() => {});
-
-  await interaction.reply({ content: '✅ Priority updated.', flags: MessageFlags.Ephemeral });
-
-  const ticketNum = ticket.number || channel.name;
+  await replyEphemeral(interaction, `${EMOJI.success} Priority updated to ${p.label}.`);
   await logTicketEvent(guild, 'priority', {
     fields: [
-      { name: 'Ticket',     value: `#${ticketNum}`,     inline: true },
-      { name: 'Priority',   value: `${p.emoji} ${p.label}`, inline: true },
-      { name: 'Updated by', value: `<@${member.id}>`,   inline: true },
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Priority', value: `${p.emoji} ${p.label}`, inline: true },
+      { name: 'Updated by', value: `<@${member.id}>`, inline: true },
     ],
   });
 }
 
-// ---------------------------------------------------------------------------
-// close
-// ---------------------------------------------------------------------------
+// ── close confirmation UI ────────────────────────────────────────────────────
+async function promptClose(interaction) {
+  const ticket = getTicket(interaction.channelId);
+  if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canCloseTicket(interaction.member, interaction.guildId, ticket)) {
+    return replyEphemeral(interaction, "⛔ You can't close this ticket.");
+  }
+  return interaction.reply({
+    embeds: [confirmCloseEmbed(interaction)],
+    components: closeConfirmRow(),
+    flags: MessageFlags.Ephemeral,
+  });
+}
 
-/**
- * Close a ticket.  The close reason has already been resolved by the caller
- * (either from the modal input or a default string).
- */
+// ── close ────────────────────────────────────────────────────────────────────
 async function close(interaction, reason) {
   const { channelId, guildId, guild, member, channel } = interaction;
-
   const ticket = getTicket(channelId);
   if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canCloseTicket(member, guildId, ticket)) return replyEphemeral(interaction, "⛔ You can't close this ticket.");
 
-  if (!canCloseTicket(member, guildId, ticket)) {
-    return replyEphemeral(interaction, "⛔ You can't close this ticket.");
+  // Acknowledge: collapse the ephemeral confirm UI, or defer a fresh reply.
+  if (interaction.isButton?.() && interaction.customId === 'ticket_close_confirm') {
+    await interaction.update({ content: `${EMOJI.loading} Closing…`, embeds: [], components: [] }).catch(() => {});
+  } else if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 
   const cfg = getConfig(guildId);
-
-  // Persist closed state.
-  updateTicket(channelId, {
-    status: 'closed',
-    closedBy: member.id,
-    closedAt: Date.now(),
-    closeReason: reason,
+  const updated = updateTicket(channelId, {
+    status: 'closed', closedBy: member.id, closedAt: Date.now(), closeReason: reason,
   });
 
-  // Move to closed category if configured.
   if (cfg.closedCategoryId) {
     await channel.setParent(cfg.closedCategoryId, { lockPermissions: false }).catch(() => {});
   }
+  await channel.permissionOverwrites.edit(ticket.userId, { ViewChannel: false, SendMessages: false }).catch(() => {});
 
-  // Revoke opener's access.
-  await channel.permissionOverwrites
-    .edit(ticket.userId, { ViewChannel: false, SendMessages: false })
-    .catch(() => {});
+  await rerenderWelcome(channel, updated, cfg);
 
-  // Edit the welcome message — update Status field and color.
-  const welcomeMsg = await fetchMessage(channel, ticket.welcomeMessageId);
-  if (welcomeMsg?.embeds?.[0]) {
-    try {
-      const oldEmbed = welcomeMsg.embeds[0];
-      const newFields = replaceField(oldEmbed.fields, 'Status', '🔴 Closed');
-      const updatedEmbed = EmbedBuilder.from(oldEmbed)
-        .setFields(newFields)
-        .setColor(COLORS.closed);
-      await welcomeMsg.edit({ embeds: [updatedEmbed], components: [] });
-    } catch (e) {
-      logger.warn('[ticket:close] could not edit welcome msg:', e.message);
-    }
-  }
+  await channel.send({
+    embeds: [closedEmbed(channel, updated, { byId: member.id, reason })],
+    components: closedRows(),
+  }).catch(() => {});
 
-  // Post close status embed.
-  const dmLine = cfg.dmOnClose ? '\n\n📩 A DM has been sent to the ticket creator.' : '';
-  const closeEmbed = new EmbedBuilder()
-    .setTitle('Ticket Closed')
-    .setDescription(
-      `This ticket has been closed by <@${member.id}>.\n**Reason:** ${reason}${dmLine}`,
-    )
-    .setColor(COLORS.closed)
-    .setFooter({ text: `Ticket ID: ${channelId}` });
-
-  await channel.send({ embeds: [closeEmbed], components: [closedRow()] }).catch(() => {});
-
-  // DM the opener if configured.
   if (cfg.dmOnClose) {
     try {
       const opener = await interaction.client.users.fetch(ticket.userId);
-      const ticketNum = ticket.number || channel.name;
-      const dmEmbed = new EmbedBuilder()
-        .setTitle('🎫 Your Ticket Has Been Closed')
-        .setDescription(
-          `Your ticket **#${ticketNum}** has been closed.\n` +
-          `**Reason:** ${reason}\n` +
-          `**Closed by:** ${member.user.tag}`,
-        )
-        .setColor(COLORS.closed)
-        .setFooter({ text: `Ticket ID: ${channelId}` });
-      await opener.send({ embeds: [dmEmbed] });
+      await opener.send({ embeds: [dmClosedEmbed(channel, updated, {
+        reason, byTag: member.user.tag, guildName: guild.name,
+      })] });
       await require('./feedback').sendSurvey(opener, guildId, channelId);
-    } catch {
-      // DMs may be disabled — silently ignore.
-    }
+    } catch { /* DMs disabled — ignore */ }
   }
 
-  const ticketNum = ticket.number || channel.name;
   await logTicketEvent(guild, 'close', {
     fields: [
-      { name: 'Ticket',    value: `#${ticketNum}`,        inline: true },
-      { name: 'Closed by', value: `<@${member.id}>`,      inline: true },
-      { name: 'Channel',   value: `<#${channelId}>`,      inline: true },
-      { name: 'Reason',    value: reason.slice(0, 1000) },
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Closed by', value: `<@${member.id}>`, inline: true },
+      { name: 'Channel', value: `<#${channelId}>`, inline: true },
+      { name: `${EMOJI.reason} Reason`, value: String(reason).slice(0, 1000) },
     ],
   });
 
-  await replyEphemeral(interaction, '🔒 Ticket closed.');
+  await replyEphemeral(interaction, `${EMOJI.close} Ticket closed.`);
 }
 
-// ---------------------------------------------------------------------------
-// reopen
-// ---------------------------------------------------------------------------
-
+// ── reopen ───────────────────────────────────────────────────────────────────
 async function reopen(interaction) {
   const { channelId, guildId, guild, member, channel } = interaction;
-
   const ticket = getTicket(channelId);
   if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
-
-  if (!canManageTicket(member, guildId)) {
-    return replyEphemeral(interaction, '⛔ Staff only.');
-  }
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
 
   const cfg = getConfig(guildId);
+  const updated = updateTicket(channelId, { status: 'open', closedBy: null, closedAt: null, closeReason: null });
 
-  // Persist open state.
-  updateTicket(channelId, {
-    status: 'open',
-    closedBy: null,
-    closedAt: null,
-    closeReason: null,
-  });
+  if (cfg.categoryId) await channel.setParent(cfg.categoryId, { lockPermissions: false }).catch(() => {});
+  await channel.permissionOverwrites.edit(ticket.userId, {
+    ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true,
+  }).catch(() => {});
 
-  // Move back to open category if configured.
-  if (cfg.categoryId) {
-    await channel.setParent(cfg.categoryId, { lockPermissions: false }).catch(() => {});
-  }
+  await rerenderWelcome(channel, updated, cfg);
 
-  // Restore opener's access.
-  await channel.permissionOverwrites
-    .edit(ticket.userId, {
-      ViewChannel: true,
-      SendMessages: true,
-      ReadMessageHistory: true,
-      AttachFiles: true,
-    })
-    .catch(() => {});
-
-  // Edit the welcome message — restore Status field and color.
-  const welcomeMsg = await fetchMessage(channel, ticket.welcomeMessageId);
-  if (welcomeMsg?.embeds?.[0]) {
-    try {
-      const oldEmbed = welcomeMsg.embeds[0];
-      const newFields = replaceField(oldEmbed.fields, 'Status', '🟢 Open');
-      const updatedEmbed = EmbedBuilder.from(oldEmbed)
-        .setFields(newFields)
-        .setColor(PRIORITY[ticket.priority || 'none'].color);
-      await welcomeMsg.edit({
-        embeds: [updatedEmbed],
-        components: [controlRow({ claimed: !!ticket.claimedBy, enablePriority: cfg.enablePriority })],
-      });
-    } catch (e) {
-      logger.warn('[ticket:reopen] could not edit welcome msg:', e.message);
-    }
-  }
-
-  // Edit the message the button lives on (the close status embed).
+  // Collapse the closed-card the Reopen button lives on.
   try {
-    const reopenEmbed = new EmbedBuilder()
-      .setTitle('Ticket Reopened')
-      .setDescription(`🔓 <@${member.id}> has reopened this ticket!`)
-      .setColor(COLORS.reopen);
-    await interaction.message.edit({ embeds: [reopenEmbed], components: [] });
-  } catch (e) {
-    logger.warn('[ticket:reopen] could not edit close-status msg:', e.message);
-  }
+    await interaction.update({
+      embeds: [noticeEmbed(channel, { color: COLORS.success, title: `${EMOJI.reopen}  Ticket Reopened`, body: `Reopened by <@${member.id}>.` })],
+      components: [],
+    });
+  } catch (e) { logger.warn('[ticket:reopen] edit close-card:', e.message); }
 
-  const ticketNum = ticket.number || channel.name;
   await logTicketEvent(guild, 'reopen', {
     fields: [
-      { name: 'Ticket',     value: `#${ticketNum}`,    inline: true },
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
       { name: 'Reopened by', value: `<@${member.id}>`, inline: true },
-      { name: 'Channel',    value: `<#${channelId}>`,  inline: true },
+      { name: 'Channel', value: `<#${channelId}>`, inline: true },
     ],
   });
-
-  await replyEphemeral(interaction, '🔓 Ticket reopened.');
 }
 
-// ---------------------------------------------------------------------------
-// deleteTicket
-// ---------------------------------------------------------------------------
+// ── add / remove user ────────────────────────────────────────────────────────
+async function promptAddUser(interaction) {
+  const { guildId, member } = interaction;
+  if (!getTicket(interaction.channelId)) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+  return interaction.reply({
+    embeds: [noticeEmbed(interaction, { color: COLORS.brand, title: `${EMOJI.addUser}  Add a member`, body: 'Select a member to grant access to this ticket.' })],
+    components: addUserRow(),
+    flags: MessageFlags.Ephemeral,
+  });
+}
 
-async function deleteTicket(interaction) {
-  const { channelId, guildId, guild, member, channel } = interaction;
+async function promptRemoveUser(interaction) {
+  const { guildId, member } = interaction;
+  if (!getTicket(interaction.channelId)) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+  return interaction.reply({
+    embeds: [noticeEmbed(interaction, { color: COLORS.warning, title: `${EMOJI.removeUser}  Remove a member`, body: 'Select a member to revoke access from this ticket.' })],
+    components: removeUserRow(),
+    flags: MessageFlags.Ephemeral,
+  });
+}
 
-  if (!canManageTicket(member, guildId)) {
-    return replyEphemeral(interaction, '⛔ Staff only.');
+async function handleAddUserSelect(interaction) {
+  const { guildId, member, channel } = interaction;
+  const ticket = getTicket(channel.id);
+  if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+
+  const targetId = interaction.values[0];
+  await channel.permissionOverwrites.edit(targetId, {
+    ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true,
+  });
+
+  await channel.send({ embeds: [noticeEmbed(channel, {
+    color: COLORS.success, body: `${EMOJI.addUser}  <@${targetId}> was added to the ticket by <@${member.id}>.`,
+  })] }).catch(() => {});
+
+  await interaction.update({
+    embeds: [noticeEmbed(interaction, { color: COLORS.success, title: `${EMOJI.success}  Member added`, body: `<@${targetId}> now has access to this ticket.` })],
+    components: [],
+  });
+
+  await logTicketEvent(interaction.guild, 'adduser', {
+    fields: [
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Added', value: `<@${targetId}>`, inline: true },
+      { name: 'By', value: `<@${member.id}>`, inline: true },
+    ],
+  });
+}
+
+async function handleRemoveUserSelect(interaction) {
+  const { guildId, member, channel } = interaction;
+  const ticket = getTicket(channel.id);
+  if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+
+  const targetId = interaction.values[0];
+  if (targetId === ticket.userId) {
+    return interaction.update({
+      embeds: [noticeEmbed(interaction, { color: COLORS.danger, title: `${EMOJI.error}  Can't remove the owner`, body: 'The ticket owner can\'t be removed. Close the ticket instead.' })],
+      components: [],
+    });
   }
 
-  const ticket = getTicket(channelId);
+  await channel.permissionOverwrites.delete(targetId).catch(() => {});
+
+  await channel.send({ embeds: [noticeEmbed(channel, {
+    color: COLORS.warning, body: `${EMOJI.removeUser}  <@${targetId}> was removed from the ticket by <@${member.id}>.`,
+  })] }).catch(() => {});
+
+  await interaction.update({
+    embeds: [noticeEmbed(interaction, { color: COLORS.warning, title: `${EMOJI.success}  Member removed`, body: `<@${targetId}> no longer has access.` })],
+    components: [],
+  });
+
+  await logTicketEvent(interaction.guild, 'removeuser', {
+    fields: [
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Removed', value: `<@${targetId}>`, inline: true },
+      { name: 'By', value: `<@${member.id}>`, inline: true },
+    ],
+  });
+}
+
+// ── on-demand transcript ─────────────────────────────────────────────────────
+async function sendTranscript(interaction) {
+  const { guildId, member, channel } = interaction;
+  const ticket = getTicket(channel.id);
+  if (!ticket) return replyEphemeral(interaction, 'Not a ticket channel.');
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const { buffer, filename, count } = await generateHtml(channel);
+  await interaction.editReply({
+    embeds: [transcriptEmbed(interaction, ticket, { channelName: channel.name, byTag: interaction.user.tag, messageCount: count })],
+    files: [{ attachment: buffer, name: filename }],
+  });
+
+  await logTicketEvent(interaction.guild, 'transcript', {
+    fields: [
+      { name: 'Ticket', value: `#${ticket.number || channel.name}`, inline: true },
+      { name: 'Requested by', value: `<@${member.id}>`, inline: true },
+    ],
+  });
+}
+
+// ── delete (+ archive transcript) ────────────────────────────────────────────
+async function deleteTicket(interaction) {
+  const { guildId, guild, member, channel } = interaction;
+  if (!canManageTicket(member, guildId)) return replyEphemeral(interaction, '⛔ Staff only.');
+
+  const ticket = getTicket(channel.id);
   const ticketNum = ticket?.number || channel.name;
 
-  // Announce deletion in channel.
-  const deleteEmbed = new EmbedBuilder()
-    .setTitle('Ticket Deleted')
-    .setDescription('🗑️ This ticket will be permanently deleted in 3 seconds.')
-    .setColor(COLORS.closed)
-    .setFooter({ text: `Ticket ID: ${channelId}` });
-
-  await channel.send({ embeds: [deleteEmbed] });
-
-  await replyEphemeral(interaction, '🗑️ Deleting in 3 seconds…');
+  await channel.send({ embeds: [deleteEmbed(channel, 5)] }).catch(() => {});
+  await replyEphemeral(interaction, `${EMOJI.delete} Deleting in 5 seconds…`);
 
   await logTicketEvent(guild, 'delete', {
     fields: [
-      { name: 'Ticket',     value: `#${ticketNum}`,    inline: true },
-      { name: 'Deleted by', value: `<@${member.id}>`,  inline: true },
+      { name: 'Ticket', value: `#${ticketNum}`, inline: true },
+      { name: 'Deleted by', value: `<@${member.id}>`, inline: true },
     ],
   });
 
-  scheduler.schedule('ticket-delete', Date.now() + 3000, {
-    guildId: interaction.guildId,
-    channelId: interaction.channelId,
-    number: ticket?.number || null,
-    byTag: interaction.user.tag,
+  scheduler.schedule('ticket-delete', Date.now() + 5000, {
+    guildId, channelId: channel.id, number: ticket?.number || null, byTag: interaction.user.tag,
   });
 }
 
-/**
- * Handler invoked by the scheduler (survives restarts).
- * Generates an HTML transcript, posts it to the transcript channel, then deletes the ticket channel.
- */
 async function performTicketDelete(data, client) {
   try {
-    const { guildId, channelId, number: ticketNum, byTag } = data;
-
+    const { guildId, channelId, byTag } = data;
     const channel = await client.channels.fetch(channelId).catch(() => null);
-    if (!channel) return; // already deleted
+    if (!channel) return;
 
-    const { buffer, filename } = await generateHtml(channel);
+    const ticket = getTicket(channelId);
+    const { buffer, filename, count } = await generateHtml(channel);
 
     const cfg = getConfig(guildId);
     if (cfg.transcriptChannelId) {
-      const transcriptChannel = await client.channels
-        .fetch(cfg.transcriptChannelId)
-        .catch(() => null);
-
-      if (transcriptChannel) {
-        const transcriptEmbed = new EmbedBuilder()
-          .setTitle('Ticket Transcript')
-          .addFields(
-            { name: 'Ticket',    value: `#${ticketNum || channelId}`,                  inline: true },
-            { name: 'Channel',   value: `#${channel.name}`,                            inline: true },
-            { name: 'Generated', value: `<t:${Math.floor(Date.now() / 1000)}:F>`,      inline: true },
-          )
-          .setFooter({ text: `Deleted by ${byTag}` })
-          .setColor(0x3498DB);
-
-        await transcriptChannel.send({
-          embeds: [transcriptEmbed],
+      const tc = await client.channels.fetch(cfg.transcriptChannelId).catch(() => null);
+      if (tc) {
+        await tc.send({
+          embeds: [transcriptEmbed(tc, ticket || { number: data.number }, { channelName: channel.name, byTag, messageCount: count })],
           files: [{ attachment: buffer, name: filename }],
-        });
+        }).catch(() => {});
       }
     }
 
@@ -724,6 +491,10 @@ async function performTicketDelete(data, client) {
   }
 }
 
-// ---------------------------------------------------------------------------
-
-module.exports = { openTicket, claim, unclaim, pin, setPriority, close, reopen, deleteTicket, performTicketDelete, isTwoFactorError, TWO_FA_MSG };
+module.exports = {
+  openTicket, claim, unclaim, setPriority,
+  promptClose, close, reopen,
+  promptAddUser, promptRemoveUser, handleAddUserSelect, handleRemoveUserSelect,
+  sendTranscript, deleteTicket, performTicketDelete,
+  isTwoFactorError, TWO_FA_MSG,
+};

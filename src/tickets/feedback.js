@@ -1,211 +1,102 @@
-// src/tickets/feedback.js — post-close feedback survey via DM.
+// src/tickets/feedback.js — post-close feedback survey via DM (branded).
 'use strict';
 
 const {
-  EmbedBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder,
-  MessageFlags,
+  ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags,
 } = require('discord.js');
 
 const { feedbackRows } = require('./constants');
+const { noticeEmbed } = require('./embeds');
+const { baseEmbed, COLORS, EMOJI } = require('../ui/theme');
 const { getTicket, updateTicket } = require('../core/ticketStore');
 const { logTicketEvent } = require('./log');
 const logger = require('../core/logger');
 
-// ---------------------------------------------------------------------------
-// sendSurvey
-// ---------------------------------------------------------------------------
-
-/**
- * DM the user a star-rating survey after their ticket is closed.
- * Silently no-ops if the user has DMs disabled.
- *
- * @param {User}   user       — Discord user object of the ticket opener
- * @param {string} guildId    — guild the ticket belonged to
- * @param {string} channelId  — ticket channel ID (used in button customIds)
- */
+/** DM the opener a star-rating survey after their ticket closes. */
 async function sendSurvey(user, guildId, channelId) {
   try {
-    const embed = new EmbedBuilder()
-      .setTitle('⭐ How was your support experience?')
-      .setDescription(
-        'Tap a star to rate the support you received. Your feedback helps us improve!',
-      )
-      .setColor(0xF1C40F)
-      .setFooter({ text: 'Your feedback helps us improve.' });
-
-    await user.send({
-      embeds: [embed],
-      components: feedbackRows(guildId, channelId),
-    });
+    const embed = baseEmbed(user, { color: COLORS.accent, timestamp: false })
+      .setTitle(`${EMOJI.star}  How was your support experience?`)
+      .setDescription('Tap a star below to rate the help you received. Your feedback helps us improve!');
+    await user.send({ embeds: [embed], components: feedbackRows(guildId, channelId) });
   } catch (e) {
-    logger.debug('[ticket:feedback] could not DM survey to user:', e.message);
+    logger.debug('[ticket:feedback] could not DM survey:', e.message);
   }
 }
 
-// ---------------------------------------------------------------------------
-// submitRating
-// ---------------------------------------------------------------------------
-
-/**
- * Handle a star-button click.  Updates the stored rating and logs it.
- *
- * @param {ButtonInteraction} interaction
- * @param {string} guildId
- * @param {string} channelId
- * @param {number} n  — rating 1-5
- */
+/** Handle a star-button click (rating 1-5). */
 async function submitRating(interaction, guildId, channelId, n) {
   const ticket = getTicket(channelId);
 
-  // Only the ticket creator may rate.
   if (ticket && interaction.user.id !== ticket.userId) {
-    return interaction.reply({
-      content: 'Only the ticket creator can rate.',
-      flags: MessageFlags.Ephemeral,
-    });
+    return interaction.reply({ content: 'Only the ticket creator can rate.', flags: MessageFlags.Ephemeral });
   }
-
-  // Guard against double-submission.
   if (ticket?.feedback?.rating) {
-    return interaction.reply({
-      content: 'You already submitted feedback. Thank you!',
-      flags: MessageFlags.Ephemeral,
-    });
+    return interaction.reply({ content: 'You already submitted feedback. Thank you!', flags: MessageFlags.Ephemeral });
   }
 
-  // Persist rating.
-  updateTicket(channelId, {
-    feedback: {
-      ...(ticket?.feedback || {}),
-      rating: n,
-      submittedAt: Date.now(),
-    },
-  });
+  updateTicket(channelId, { feedback: { ...(ticket?.feedback || {}), rating: n, submittedAt: Date.now() } });
 
-  // Log to guild log channel.
   const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
   if (guild) {
     await logTicketEvent(guild, 'feedback', {
       fields: [
-        {
-          name: 'Ticket',
-          value: ticket?.number ? `#${ticket.number}` : channelId,
-          inline: true,
-        },
-        {
-          name: 'Rating',
-          value: `${'⭐'.repeat(n)} (${n}/5)`,
-          inline: true,
-        },
+        { name: 'Ticket', value: ticket?.number ? `#${ticket.number}` : channelId, inline: true },
+        { name: 'Rating', value: `${EMOJI.star.repeat(n)} (${n}/5)`, inline: true },
       ],
     });
   }
 
-  await interaction.update({
-    content: `Thanks for rating us ${'⭐'.repeat(n)} (${n}/5)!`,
-    embeds: [],
-    components: [],
+  const thanks = noticeEmbed(interaction, {
+    color: COLORS.accent,
+    title: `${EMOJI.star.repeat(n)}`,
+    body: `Thanks for rating us **${n}/5**! Want to add a few words?`,
   });
+  await interaction.update({ embeds: [thanks], components: feedbackRows(guildId, channelId).slice(1) });
 }
 
-// ---------------------------------------------------------------------------
-// openCommentModal
-// ---------------------------------------------------------------------------
-
-/**
- * Show a modal so the user can type a written comment.
- *
- * @param {ButtonInteraction} interaction
- * @param {string} guildId
- * @param {string} channelId
- */
+/** Show the comment modal. */
 async function openCommentModal(interaction, guildId, channelId) {
   const modal = new ModalBuilder()
     .setCustomId(`ticket_feedback_comment_modal:${guildId}:${channelId}`)
     .setTitle('Add a Comment');
-
-  const commentInput = new TextInputBuilder()
-    .setCustomId('feedback_comment')
-    .setLabel('Your feedback')
-    .setStyle(TextInputStyle.Paragraph)
-    .setPlaceholder('Share what went well or how we can improve...')
-    .setRequired(true)
-    .setMaxLength(1000);
-
-  modal.addComponents(new ActionRowBuilder().addComponents(commentInput));
-
+  const input = new TextInputBuilder()
+    .setCustomId('feedback_comment').setLabel('Your feedback')
+    .setStyle(TextInputStyle.Paragraph).setPlaceholder('Share what went well or how we can improve…')
+    .setRequired(true).setMaxLength(1000);
+  modal.addComponents(new ActionRowBuilder().addComponents(input));
   return interaction.showModal(modal);
 }
 
-// ---------------------------------------------------------------------------
-// saveComment
-// ---------------------------------------------------------------------------
-
-/**
- * Handle submission of the feedback-comment modal.
- *
- * @param {ModalSubmitInteraction} interaction
- * @param {string} guildId
- * @param {string} channelId
- */
+/** Persist the comment from the modal. */
 async function saveComment(interaction, guildId, channelId) {
   const comment = interaction.fields.getTextInputValue('feedback_comment');
   const ticket = getTicket(channelId);
 
-  updateTicket(channelId, {
-    feedback: {
-      ...(ticket?.feedback || {}),
-      comment,
-      commentSubmittedAt: Date.now(),
-    },
-  });
+  updateTicket(channelId, { feedback: { ...(ticket?.feedback || {}), comment, commentSubmittedAt: Date.now() } });
 
-  // Log to guild log channel.
   const guild = await interaction.client.guilds.fetch(guildId).catch(() => null);
   if (guild) {
     await logTicketEvent(guild, 'feedback', {
       fields: [
-        {
-          name: 'Ticket',
-          value: ticket?.number ? `#${ticket.number}` : channelId,
-          inline: true,
-        },
-        {
-          name: 'Comment',
-          value: comment.slice(0, 1024),
-          inline: false,
-        },
+        { name: 'Ticket', value: ticket?.number ? `#${ticket.number}` : channelId, inline: true },
+        { name: 'Comment', value: comment.slice(0, 1024), inline: false },
       ],
     });
   }
 
   await interaction.reply({
-    content: '📝 Thanks for your feedback!',
+    embeds: [noticeEmbed(interaction, { color: COLORS.success, title: `${EMOJI.success}  Thank you!`, body: 'Your feedback has been recorded.' })],
     flags: MessageFlags.Ephemeral,
   });
 }
 
-// ---------------------------------------------------------------------------
-// declineFeedback
-// ---------------------------------------------------------------------------
-
-/**
- * Handle the "No thanks" button — clear the survey message.
- *
- * @param {ButtonInteraction} interaction
- */
+/** "No thanks" — clear the survey message. */
 async function declineFeedback(interaction) {
   await interaction.update({
-    content: '👋 No problem! You can always reach out again if you need support.',
-    embeds: [],
+    embeds: [noticeEmbed(interaction, { color: COLORS.muted, title: `${EMOJI.wave}  No problem!`, body: 'You can always reach out again if you need support.' })],
     components: [],
   });
 }
-
-// ---------------------------------------------------------------------------
 
 module.exports = { sendSurvey, submitRating, openCommentModal, saveComment, declineFeedback };

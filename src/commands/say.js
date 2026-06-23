@@ -7,6 +7,7 @@ const {
 } = require('discord.js');
 const { isStaff } = require('../core/perms');
 const { checkSendPerms } = require('../embeds/build');
+const { formatToText } = require('../core/format');
 const modlog = require('../core/modlog');
 const logger = require('../core/logger');
 
@@ -33,7 +34,8 @@ async function execute(interaction) {
     return interaction.reply({ content: '⛔ Staff only.', flags: MessageFlags.Ephemeral });
   }
 
-  const message = interaction.options.getString('message', true);
+  const raw = interaction.options.getString('message', true);
+  const message = formatToText(raw).slice(0, 2000) || raw; // tidy spacing/lists
   const channel = interaction.options.getChannel('channel') ?? interaction.channel;
 
   const missing = checkSendPerms(channel, interaction.guild.members.me, false);

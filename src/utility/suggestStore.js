@@ -5,6 +5,7 @@
 'use strict';
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { COLORS, EMOJI } = require('../ui/theme');
 const store = require('../core/store');
 
 const FILE = 'suggestions.json';
@@ -40,19 +41,27 @@ function score(s) { return s.up.length - s.down.length; }
 
 // ── rendering ────────────────────────────────────────────────────────────────
 function renderEmbed(s, authorTag) {
+  const up = s.up.length;
+  const down = s.down.length;
+  const sc = score(s);
   const embed = new EmbedBuilder()
-    .setTitle('💡 Suggestion')
-    .setDescription(s.text)
-    .setColor(0xF1C40F)
-    .addFields({ name: 'Votes', value: `👍 ${s.up.length}  •  👎 ${s.down.length}  •  Score ${score(s)}` });
+    .setColor(COLORS.accent)
+    .setAuthor({ name: 'Community Suggestion' })
+    .setDescription(`${EMOJI.bulb}  ${s.text}`)
+    .addFields(
+      { name: 'Upvotes', value: `${EMOJI.up} **${up}**`, inline: true },
+      { name: 'Downvotes', value: `${EMOJI.down} **${down}**`, inline: true },
+      { name: 'Score', value: `${sc > 0 ? '+' : ''}${sc}`, inline: true },
+    )
+    .setTimestamp();
   if (authorTag) embed.setFooter({ text: `Suggested by ${authorTag}` });
   return embed;
 }
 
 function renderRows(disabled = false) {
   return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('suggest:up').setEmoji('👍').setStyle(ButtonStyle.Success).setDisabled(disabled),
-    new ButtonBuilder().setCustomId('suggest:down').setEmoji('👎').setStyle(ButtonStyle.Danger).setDisabled(disabled),
+    new ButtonBuilder().setCustomId('suggest:up').setLabel('Upvote').setEmoji(EMOJI.up).setStyle(ButtonStyle.Success).setDisabled(disabled),
+    new ButtonBuilder().setCustomId('suggest:down').setLabel('Downvote').setEmoji(EMOJI.down).setStyle(ButtonStyle.Danger).setDisabled(disabled),
   )];
 }
 
