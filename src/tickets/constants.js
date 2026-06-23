@@ -1,145 +1,139 @@
-// src/tickets/constants.js — colors, priority map, customIds, emojis, button builders.
-const { ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+// src/tickets/constants.js — ticket interaction components + log colors.
+//
+// Colors/priorities/emojis now live in the global design system (src/ui/theme).
+// This file only assembles the button rows, select menus and customIds for the
+// ticket UI so every control is visually consistent across the lifecycle.
+'use strict';
 
-const PRIORITY = {
-  none:   { emoji: '⚪', label: 'None',   color: '#95A5A6' },
-  low:    { emoji: '🟢', label: 'Low',    color: '#2ECC71' },
-  medium: { emoji: '🟡', label: 'Medium', color: '#F1C40F' },
-  high:   { emoji: '🔴', label: 'High',   color: '#E74C3C' },
-  urgent: { emoji: '🚨', label: 'Urgent', color: '#E91E63' },
-};
+const {
+  ButtonBuilder, ButtonStyle, ActionRowBuilder,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder, UserSelectMenuBuilder,
+} = require('discord.js');
+const { COLORS, PRIORITY, EMOJI } = require('../ui/theme');
 
-const COLORS = {
-  info:    '#3498DB',
-  open:    '#2ECC71',
-  closed:  '#E74C3C',
-  claim:   '#2ECC71',
-  unclaim: '#F39C12',
-  reopen:  '#2ECC71',
-};
-
+// Per-event colors for ticket log embeds (mapped onto the design palette).
 const LOG_COLORS = {
-  open:     0x5865F2,
-  close:    0xED4245,
-  reopen:   0x2ECC71,
-  delete:   0x8B0000,
-  claim:    0x5865F2,
-  unclaim:  0xFAA61A,
-  priority: 0x9B59B6,
-  feedback: 0x57F287,
-  pin:      0x5865F2,
-  unpin:    0x95A5A6,
+  open:       COLORS.success,
+  close:      COLORS.danger,
+  reopen:     COLORS.success,
+  delete:     COLORS.neutral,
+  claim:      COLORS.brand,
+  unclaim:    COLORS.warning,
+  priority:   COLORS.accent,
+  feedback:   COLORS.accent,
+  pin:        COLORS.brand,
+  unpin:      COLORS.muted,
+  adduser:    COLORS.success,
+  removeuser: COLORS.warning,
+  transcript: COLORS.brand,
 };
 
+// ── Open-ticket control panel (multi-row, premium layout) ────────────────────
 /**
- * controlRow({ claimed, enablePriority })
- * Buttons: Claim/Claimed, Pin, Close [, Low, High if enablePriority]
+ * controlRows({ claimed, enablePriority }) → ActionRow[]
+ * Row 1: Claim/Unclaim · Close · Transcript
+ * Row 2: Add User · Remove User
+ * Row 3 (optional): Priority select menu
  */
-function controlRow({ claimed = false, enablePriority = true } = {}) {
-  const claimBtn = new ButtonBuilder()
-    .setCustomId('ticket_claim')
-    .setLabel(claimed ? 'Claimed' : 'Claim')
-    .setEmoji('🙋')
-    .setStyle(claimed ? ButtonStyle.Secondary : ButtonStyle.Primary)
-    .setDisabled(claimed);
+function controlRows({ claimed = false, enablePriority = true } = {}) {
+  const primaryBtn = claimed
+    ? new ButtonBuilder().setCustomId('ticket_unclaim').setLabel('Unclaim').setEmoji(EMOJI.unclaim).setStyle(ButtonStyle.Secondary)
+    : new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setEmoji(EMOJI.claim).setStyle(ButtonStyle.Primary);
 
-  const pinBtn = new ButtonBuilder()
-    .setCustomId('ticket_pin')
-    .setLabel('Pin')
-    .setEmoji('📌')
-    .setStyle(ButtonStyle.Secondary);
-
-  const closeBtn = new ButtonBuilder()
-    .setCustomId('ticket_close')
-    .setLabel('Close')
-    .setEmoji('🔒')
-    .setStyle(ButtonStyle.Danger);
-
-  const row = new ActionRowBuilder().addComponents(claimBtn, pinBtn, closeBtn);
-
-  if (enablePriority) {
-    const lowBtn = new ButtonBuilder()
-      .setCustomId('ticket_priority:low')
-      .setLabel('Low')
-      .setEmoji('🟢')
-      .setStyle(ButtonStyle.Secondary);
-
-    const highBtn = new ButtonBuilder()
-      .setCustomId('ticket_priority:high')
-      .setLabel('High')
-      .setEmoji('🔴')
-      .setStyle(ButtonStyle.Danger);
-
-    row.addComponents(lowBtn, highBtn);
-  }
-
-  return row;
-}
-
-/**
- * closedRow()
- * Buttons: Reopen, Delete
- */
-function closedRow() {
-  const reopenBtn = new ButtonBuilder()
-    .setCustomId('ticket_reopen')
-    .setLabel('Reopen')
-    .setEmoji('🔓')
-    .setStyle(ButtonStyle.Success);
-
-  const deleteBtn = new ButtonBuilder()
-    .setCustomId('ticket_delete')
-    .setLabel('Delete')
-    .setEmoji('🗑️')
-    .setStyle(ButtonStyle.Danger);
-
-  return new ActionRowBuilder().addComponents(reopenBtn, deleteBtn);
-}
-
-/**
- * feedbackRows(guildId, channelId)
- * Row 1: five star buttons (⭐ 1..⭐ 5)
- * Row 2: Add Comment + No thanks
- */
-function feedbackRows(guildId, channelId) {
-  const starButtons = [1, 2, 3, 4, 5].map((n) =>
-    new ButtonBuilder()
-      .setCustomId(`ticket_feedback:${guildId}:${channelId}:${n}`)
-      .setLabel(`⭐ ${n}`)
-      .setStyle(n < 5 ? ButtonStyle.Secondary : ButtonStyle.Primary),
+  const row1 = new ActionRowBuilder().addComponents(
+    primaryBtn,
+    new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji(EMOJI.close).setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setEmoji(EMOJI.transcript).setStyle(ButtonStyle.Secondary),
   );
 
-  const row1 = new ActionRowBuilder().addComponents(...starButtons);
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_adduser').setLabel('Add User').setEmoji(EMOJI.addUser).setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ticket_removeuser').setLabel('Remove User').setEmoji(EMOJI.removeUser).setStyle(ButtonStyle.Secondary),
+  );
 
-  const commentBtn = new ButtonBuilder()
-    .setCustomId(`ticket_feedback_comment:${guildId}:${channelId}`)
-    .setLabel('Add Comment')
-    .setEmoji('✍️')
-    .setStyle(ButtonStyle.Secondary);
+  const rows = [row1, row2];
 
-  const declineBtn = new ButtonBuilder()
-    .setCustomId(`ticket_feedback_decline:${guildId}:${channelId}`)
-    .setLabel('No thanks')
-    .setEmoji('❌')
-    .setStyle(ButtonStyle.Secondary);
+  if (enablePriority) {
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('ticket_priority_select')
+      .setPlaceholder(`${EMOJI.priority}  Set priority…`)
+      .addOptions(
+        ['urgent', 'high', 'medium', 'low', 'none'].map((key) => {
+          const p = PRIORITY[key];
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(p.label)
+            .setValue(key)
+            .setEmoji(p.emoji);
+        }),
+      );
+    rows.push(new ActionRowBuilder().addComponents(select));
+  }
 
-  const row2 = new ActionRowBuilder().addComponents(commentBtn, declineBtn);
+  return rows;
+}
 
+// ── Closed-ticket footer controls ────────────────────────────────────────────
+/** closedRows() → ActionRow[] — Reopen · Transcript · Delete */
+function closedRows() {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_reopen').setLabel('Reopen').setEmoji(EMOJI.reopen).setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setEmoji(EMOJI.transcript).setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji(EMOJI.delete).setStyle(ButtonStyle.Danger),
+  )];
+}
+
+// ── Close confirmation (ephemeral) ───────────────────────────────────────────
+/** closeConfirmRow() → ActionRow[] — Confirm · Add reason · Cancel */
+function closeConfirmRow() {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_close_confirm').setLabel('Confirm Close').setEmoji(EMOJI.close).setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ticket_close_reason').setLabel('Add Reason').setEmoji(EMOJI.reason).setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('ticket_close_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+  )];
+}
+
+// ── User pickers (ephemeral) for add/remove ──────────────────────────────────
+function addUserRow() {
+  return [new ActionRowBuilder().addComponents(
+    new UserSelectMenuBuilder().setCustomId('ticket_adduser_select').setPlaceholder('Select a member to add…').setMaxValues(1),
+  )];
+}
+function removeUserRow() {
+  return [new ActionRowBuilder().addComponents(
+    new UserSelectMenuBuilder().setCustomId('ticket_removeuser_select').setPlaceholder('Select a member to remove…').setMaxValues(1),
+  )];
+}
+
+// ── Feedback survey (DM) ─────────────────────────────────────────────────────
+/**
+ * feedbackRows(guildId, channelId)
+ * Row 1: five star buttons · Row 2: Add Comment + No thanks
+ */
+function feedbackRows(guildId, channelId) {
+  const stars = [1, 2, 3, 4, 5].map((n) =>
+    new ButtonBuilder()
+      .setCustomId(`ticket_feedback:${guildId}:${channelId}:${n}`)
+      .setLabel(String(n))
+      .setEmoji(EMOJI.star)
+      .setStyle(n === 5 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+  );
+  const row1 = new ActionRowBuilder().addComponents(...stars);
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`ticket_feedback_comment:${guildId}:${channelId}`).setLabel('Add Comment').setEmoji('✍️').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`ticket_feedback_decline:${guildId}:${channelId}`).setLabel('No thanks').setStyle(ButtonStyle.Secondary),
+  );
   return [row1, row2];
 }
 
-/**
- * panelComponents(buttonLabel)
- * Row with a single Create Ticket button.
- */
+// ── Panel "Create Ticket" button ─────────────────────────────────────────────
 function panelComponents(buttonLabel = 'Create Ticket') {
-  const btn = new ButtonBuilder()
-    .setCustomId('create_ticket')
-    .setLabel(buttonLabel)
-    .setEmoji('📩')
-    .setStyle(ButtonStyle.Primary);
-
-  return new ActionRowBuilder().addComponents(btn);
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('create_ticket').setLabel(buttonLabel).setEmoji(EMOJI.ticket).setStyle(ButtonStyle.Primary),
+  )];
 }
 
-module.exports = { PRIORITY, COLORS, LOG_COLORS, controlRow, closedRow, feedbackRows, panelComponents };
+module.exports = {
+  LOG_COLORS, PRIORITY,
+  controlRows, closedRows, closeConfirmRow, addUserRow, removeUserRow,
+  feedbackRows, panelComponents,
+};

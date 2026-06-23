@@ -404,8 +404,8 @@ async function handleConfig(interaction) {
         if (pMsg) {
           const { buildPanelEmbed: bpe } = require('../tickets/panel');
           await pMsg.edit({
-            embeds: [bpe(cfg)],
-            components: [panelComponents(cfg.buttonLabel)],
+            embeds: [bpe(pCh, cfg)],
+            components: panelComponents(cfg.buttonLabel),
           });
         }
       }

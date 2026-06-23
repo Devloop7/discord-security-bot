@@ -10,6 +10,7 @@ const { Events, EmbedBuilder, AuditLogEvent, ChannelType } = require('discord.js
 const guildConfig = require('../core/guildConfig');
 const { isEnabled, resolveChannelId } = require('./config');
 const { fetchExecutor } = require('../core/auditlog');
+const { brandFooter } = require('../ui/theme');
 const logger = require('../core/logger');
 
 // Central emit: gate via config, resolve the destination channel, send the embed.
@@ -26,8 +27,8 @@ async function emit(guild, key, { title, description, color = 0x5865f2, footer }
       .setTitle(title)
       .setDescription(String(description ?? '').slice(0, 4096))
       .setColor(color)
+      .setFooter(footer ? { text: footer } : brandFooter(guild))
       .setTimestamp();
-    if (footer) embed.setFooter({ text: footer });
     await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
   } catch (e) {
     logger.error('[logging:emit]', e.message);

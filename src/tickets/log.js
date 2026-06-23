@@ -1,49 +1,43 @@
-// src/tickets/log.js — emit structured embeds to the configured ticket log channel.
-const { EmbedBuilder } = require('discord.js');
+// src/tickets/log.js — emit branded ticket-event embeds to the log channel.
+'use strict';
+
 const { LOG_COLORS } = require('./constants');
+const { baseEmbed, EMOJI, COLORS } = require('../ui/theme');
 const { getConfig } = require('../core/ticketStore');
 const logger = require('../core/logger');
 
-const EVENT_TITLES = {
-  open:     'Ticket Created',
-  close:    'Ticket Closed',
-  reopen:   'Ticket Reopened',
-  delete:   'Ticket Deleted',
-  claim:    'Ticket Claimed',
-  unclaim:  'Ticket Unclaimed',
-  priority: 'Priority Updated',
-  pin:      'Ticket Pinned',
-  unpin:    'Ticket Unpinned',
-  feedback: '⭐ Feedback Received',
+const EVENT = {
+  open:       { title: 'Ticket Created',      icon: EMOJI.ticket },
+  close:      { title: 'Ticket Closed',       icon: EMOJI.close },
+  reopen:     { title: 'Ticket Reopened',     icon: EMOJI.reopen },
+  delete:     { title: 'Ticket Deleted',      icon: EMOJI.delete },
+  claim:      { title: 'Ticket Claimed',      icon: EMOJI.claim },
+  unclaim:    { title: 'Ticket Unclaimed',    icon: EMOJI.unclaim },
+  priority:   { title: 'Priority Updated',    icon: EMOJI.priority },
+  feedback:   { title: 'Feedback Received',   icon: EMOJI.star },
+  adduser:    { title: 'Member Added',        icon: EMOJI.addUser },
+  removeuser: { title: 'Member Removed',      icon: EMOJI.removeUser },
+  transcript: { title: 'Transcript Generated',icon: EMOJI.transcript },
+  pin:        { title: 'Ticket Pinned',       icon: EMOJI.pin },
+  unpin:      { title: 'Ticket Unpinned',     icon: EMOJI.pin },
 };
 
 /**
  * logTicketEvent(guild, type, { ticketNumber, fields })
- * Sends a log embed to the guild's configured logChannelId.
- * Silent if no channel configured. Never throws.
- *
- * @param {Guild} guild
- * @param {string} type  — key in EVENT_TITLES / LOG_COLORS
- * @param {{ ticketNumber?: string, fields?: {name:string,value:string,inline?:boolean}[] }} opts
+ * Sends a branded log embed to the configured logChannelId. Never throws.
  */
 async function logTicketEvent(guild, type, { ticketNumber, fields = [] } = {}) {
   try {
     const cfg = getConfig(guild.id);
     if (!cfg.logChannelId) return;
-
     const channel = guild.channels.cache.get(cfg.logChannelId)
       ?? await guild.channels.fetch(cfg.logChannelId).catch(() => null);
     if (!channel) return;
 
-    const color = LOG_COLORS[type] ?? 0x5865F2;
-    const title = EVENT_TITLES[type] ?? type;
+    const meta = EVENT[type] || { title: type, icon: EMOJI.info };
+    const color = LOG_COLORS[type] ?? COLORS.brand;
 
-    const embed = new EmbedBuilder()
-      .setColor(color)
-      .setTitle(title)
-      .setFooter({ text: 'Security Bot Ticketing' })
-      .setTimestamp();
-
+    const embed = baseEmbed(guild, { color }).setTitle(`${meta.icon}  ${meta.title}`);
     if (ticketNumber) embed.setDescription(`Ticket **#${ticketNumber}**`);
     if (fields.length) embed.addFields(fields);
 
