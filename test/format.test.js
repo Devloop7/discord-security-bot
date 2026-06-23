@@ -108,3 +108,31 @@ test('formatToEmbeds respects an explicit title over content', () => {
   const [embed] = formatToEmbeds('Just a body line', { title: 'Custom' });
   assert.strictEqual(embed.toJSON().title, 'Custom');
 });
+
+// ── flattened arrow-list reflow (slash-command single-line paste) ─────────────
+test('normalize reflows a flattened arrow list into bullets + headings', () => {
+  const A = String.fromCharCode(0x27a4); // ➤
+  const raw = `Intro line ${A} Works everywhere SCRIPTS INCLUDED ${A} Alpha ${A} Bravo ${A} + More GAME SUPPORT ${A} Fortnite ${A} Apex`;
+  const md = normalizeText(raw);
+  assert.match(md, /## SCRIPTS INCLUDED/);
+  assert.match(md, /## GAME SUPPORT/);
+  assert.match(md, /^- Alpha$/m);
+  assert.match(md, /^- Fortnite$/m);
+  // no leading space left after a heading
+  assert.doesNotMatch(md, /\n[ \t]+\S/);
+});
+
+test('normalize leaves normal prose untouched (no false arrow reflow)', () => {
+  const prose = 'This is a normal sentence. It has no arrows.\n\nSecond paragraph.';
+  assert.strictEqual(normalizeText(prose), prose);
+});
+
+test('formatToEmbeds turns an arrow promo into a structured embed', () => {
+  const A = String.fromCharCode(0x27a4);
+  const raw = `VIP ${A} Perk one ${A} Perk two BENEFITS ${A} Fast support ${A} Lifetime access`;
+  const [embed] = formatToEmbeds(raw, { title: 'test' });
+  const desc = embed.toJSON().description;
+  assert.match(desc, /## BENEFITS/);
+  assert.match(desc, /- Fast support/);
+  assert.ok(desc.split('\n').length >= 4, 'should be multi-line, not a wall');
+});
