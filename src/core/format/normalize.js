@@ -22,6 +22,14 @@ const RE_BULLET      = new RegExp('^[ \\t]*[' + cc(0x2022, 0x25aa, 0x25e6, 0x202
 // En/em-dash used as a bullet: – —
 const RE_DASH_BULLET = new RegExp('^[ \\t]*[' + cc(0x2013, 0x2014) + '][ \\t]+', 'gm');
 
+// "Arrow" bullet glyphs people use in promos/announcements: ➤ ► ▶ ➔ ➜ ‣ » ❯ ▸ →
+const ARROW_CLASS = '[' + cc(0x27a4, 0x25ba, 0x25b6, 0x2794, 0x279c, 0x2023, 0x00bb, 0x276f, 0x25b8, 0x2192, 0x2799) + ']';
+const RE_ARROW_GLOBAL = new RegExp(ARROW_CLASS, 'g');
+const RE_ARROW_SPLIT = new RegExp('[ \\t]*' + ARROW_CLASS + '[ \\t]*', 'g');
+// An ALL-CAPS section label: two+ caps words ("GAME SUPPORT") or one long word
+// ("BENEFITS"). Used to break section headers out of a flattened arrow list.
+const RE_CAPS_HEADER = /([^\n])[ \t]+((?:[A-Z][A-Z0-9]+(?:[ \t]+[A-Z0-9][A-Z0-9&/]+)+)|[A-Z]{5,})(?=$|[ \t:\n])/g;
+
 // ── HTML handling ────────────────────────────────────────────────────────────
 function looksLikeHtml(s) {
   return /<\/?(p|div|span|h[1-6]|ul|ol|li|a|strong|b|em|i|br|blockquote|pre|code|hr|table)\b[^>]*>/i.test(s);
@@ -92,6 +100,26 @@ function htmlToMarkdown(html) {
   return decodeEntities(s);
 }
 
+// ── Flattened arrow-list reflow ──────────────────────────────────────────────
+// Discord slash-command string options are single-line: pasting a multi-line,
+// arrow-bulleted promo collapses it into one run-on wall (➤ a ➤ b ➤ c …). This
+// rebuilds the structure: each ➤ becomes its own bullet line, and ALL-CAPS
+// section labels (GAME SUPPORT, BENEFITS, …) become headings. Only kicks in when
+// the text actually looks like an arrow list (2+ arrows), so normal prose and
+// real Markdown are left untouched.
+function reflowArrowList(s) {
+  const count = (s.match(RE_ARROW_GLOBAL) || []).length;
+  if (count < 2) return s;
+  // Each arrow → a new dash-bullet line.
+  s = s.replace(RE_ARROW_SPLIT, '\n- ');
+  // Break ALL-CAPS section labels onto their own heading line.
+  s = s.replace(RE_CAPS_HEADER, (m, before, hdr) => `${before}\n## ${hdr.trim()}\n`);
+  // Strip leading spaces a split may have left on the start of a line, and tidy
+  // stray "+ " lead-ins ("- + More" → "- More"). Safe here: promos don't nest.
+  s = s.replace(/\n[ \t]+/g, '\n').replace(/^- \+ /gm, '- ');
+  return s;
+}
+
 // ── Main normalizer ──────────────────────────────────────────────────────────
 /**
  * normalizeText(input) → string
@@ -102,6 +130,7 @@ function normalizeText(input) {
   if (!s.trim()) return '';
 
   if (looksLikeHtml(s)) s = htmlToMarkdown(s);
+  s = reflowArrowList(s);
 
   s = s
     .replace(/\r\n?/g, '\n')   // CRLF / CR → LF
@@ -125,4 +154,4 @@ function normalizeText(input) {
   return s;
 }
 
-module.exports = { normalizeText, htmlToMarkdown, looksLikeHtml, decodeEntities };
+module.exports = { normalizeText, reflowArrowList, htmlToMarkdown, looksLikeHtml, decodeEntities };
