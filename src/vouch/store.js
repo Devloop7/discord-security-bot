@@ -1,69 +1,81 @@
-// src/vouch/store.js — persistence + queries for the vouch (reputation) system.
+// src/vouch/store.js — persistence + queries for the shop review (vouch) system.
 //
-// Each member accrues vouches FROM other members. One vouch per (giver → target)
-// is allowed ever (enforced inside the write, race-safe), keeping counts honest.
-//
-// vouches.json shape: { "<guildId>": { "<targetId>": [ { from, comment, ts } ] } }
-// (The vouch-feed channel id lives in guildConfig.vouch.channelId, not here.)
+// Customers leave ONE review per guild: a 1–5 star rating + a comment + optional proof.
+// reviews.json shape: { "<guildId>": [ { from, rating, comment, proof, ts } ] }
 'use strict';
 
 const store = require('../core/store');
 
-const FILE = 'vouches.json';
+const FILE = 'reviews.json';
 
 function db() { return store.read(FILE, {}); }
-function listFor(guildId, targetId) {
-  const g = db()[guildId];
-  return (g && g[targetId]) || [];
+function listFor(guildId) { return db()[guildId] || []; }
+
+// ── pure helpers (unit-tested) ───────────────────────────────────────────────
+function avgOf(list) {
+  if (!list.length) return 0;
+  const sum = list.reduce((a, r) => a + (Number(r.rating) || 0), 0);
+  return Math.round((sum / list.length) * 10) / 10; // 1 decimal place
+}
+function distOf(list) {
+  const d = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const r of list) if (d[r.rating] !== undefined) d[r.rating] += 1;
+  return d;
 }
 
-// ── queries (sync reads) ─────────────────────────────────────────────────────
-function hasVouched(guildId, fromId, targetId) {
-  return listFor(guildId, targetId).some((v) => v.from === fromId);
+// ── queries ──────────────────────────────────────────────────────────────────
+function hasReviewed(guildId, fromId) { return listFor(guildId).some((r) => r.from === fromId); }
+function count(guildId) { return listFor(guildId).length; }
+function average(guildId) { return avgOf(listFor(guildId)); }
+function distribution(guildId) { return distOf(listFor(guildId)); }
+function recent(guildId, n = 5) {
+  return [...listFor(guildId)].sort((a, b) => b.ts - a.ts).slice(0, n);
 }
-function countFor(guildId, targetId) { return listFor(guildId, targetId).length; }
-function recentFor(guildId, targetId, n = 5) {
-  return [...listFor(guildId, targetId)].sort((a, b) => b.ts - a.ts).slice(0, n);
-}
-function leaderboard(guildId, n = 10) {
-  const g = db()[guildId] || {};
-  return Object.entries(g)
-    .map(([targetId, list]) => ({ targetId, count: list.length }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, n);
+function stats(guildId) {
+  const list = listFor(guildId);
+  return { count: list.length, average: avgOf(list), distribution: distOf(list) };
 }
 
-// ── mutations (async; check happens inside the serialized write) ─────────────
-// Returns { ok:true, count } or { error } if the giver already vouched the target.
-async function addVouch(guildId, fromId, targetId, comment, ts = Date.now()) {
+// ── mutations (async; one-per-person enforced inside the serialized write) ───
+async function addReview(guildId, fromId, { rating, comment, proof }, ts = Date.now()) {
+  const r = Number(rating);
+  if (!Number.isInteger(r) || r < 1 || r > 5) return { error: 'Rating must be between 1 and 5 stars.' };
   let result;
   await store.mutate(FILE, (data) => {
-    const g = (data[guildId] = data[guildId] || {});
-    const list = (g[targetId] = g[targetId] || []);
-    if (list.some((v) => v.from === fromId)) {
-      result = { error: 'You have already vouched for this member.' };
+    const list = (data[guildId] = data[guildId] || []);
+    if (list.some((x) => x.from === fromId)) {
+      result = { error: 'You have already left a review.' };
       return;
     }
-    list.push({ from: fromId, comment: comment ? String(comment).slice(0, 500) : null, ts });
-    result = { ok: true, count: list.length };
+    list.push({
+      from: fromId,
+      rating: r,
+      comment: comment ? String(comment).slice(0, 1000) : null,
+      proof: proof ? String(proof).slice(0, 500) : null,
+      ts,
+    });
+    result = { ok: true, count: list.length, average: avgOf(list) };
   }, {});
   return result;
 }
 
-// Remove the vouch a specific giver left for a target (staff anti-abuse). Returns { removed, count }.
-async function removeVouch(guildId, fromId, targetId) {
+async function removeReview(guildId, fromId) {
   let removed = false;
-  let count = 0;
+  let n = 0;
   await store.mutate(FILE, (data) => {
-    const g = data[guildId];
-    if (!g || !g[targetId]) return;
-    const before = g[targetId].length;
-    g[targetId] = g[targetId].filter((v) => v.from !== fromId);
-    removed = g[targetId].length !== before;
-    count = g[targetId].length;
-    if (g[targetId].length === 0) delete g[targetId];
+    const list = data[guildId];
+    if (!list) return;
+    const before = list.length;
+    data[guildId] = list.filter((r) => r.from !== fromId);
+    removed = data[guildId].length !== before;
+    n = data[guildId].length;
+    if (data[guildId].length === 0) delete data[guildId];
   }, {});
-  return { removed, count };
+  return { removed, count: n };
 }
 
-module.exports = { FILE, hasVouched, countFor, recentFor, addVouch, removeVouch, leaderboard };
+module.exports = {
+  FILE, avgOf, distOf,
+  hasReviewed, count, average, distribution, recent, stats,
+  addReview, removeReview,
+};

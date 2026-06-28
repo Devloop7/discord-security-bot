@@ -35,6 +35,7 @@ const modules = [
   require('./src/utility'),
   require('./src/reactionroles'),
   require('./src/invites'),
+  require('./src/vouch/panel'),
   require('./src/commands'),
   require('./src/tickets/interactions'),
   require('./src/embeds/interactions'),

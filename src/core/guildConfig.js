@@ -23,7 +23,7 @@ const DEFAULTS = {
   suggestions: { channelId: null },
   permissions: { commandOverrides: {}, staffLevels: { mod: [], admin: [] } },
   autopost: { timezone: 'Asia/Jerusalem' },
-  vouch: { channelId: null },
+  vouch: { channelId: null, panelChannelId: null, panelMessageId: null },
 };
 
 function all() { return store.read(FILE, {}); }

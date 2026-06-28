@@ -1,0 +1,183 @@
+// src/vouch/panel.js — the review panel, the review embed, and the
+// button → star-select → modal interaction flow. All visuals come from
+// src/ui/theme.js so the system matches the rest of the bot.
+//
+// customIds (namespace "vouch:"):
+//   button  'vouch:leave'         → open the star picker
+//   select  'vouch:stars'         → values:["1".."5"], opens the modal
+//   modal   'vouch:modal:<rating>'→ records the review + posts it + refreshes the panel
+'use strict';
+
+const {
+  Events, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags,
+} = require('discord.js');
+const store = require('./store');
+const guildConfig = require('../core/guildConfig');
+const { baseEmbed, COLORS, EMOJI } = require('../ui/theme');
+const logger = require('../core/logger');
+
+// ── small renderers ──────────────────────────────────────────────────────────
+function renderStars(rating) {
+  const r = Math.max(0, Math.min(5, Number(rating) || 0));
+  return `${'⭐'.repeat(r)}  \`${r}/5\``;
+}
+function ratingColor(rating) {
+  if (rating >= 5) return COLORS.success;
+  if (rating === 4) return COLORS.brand;
+  if (rating === 3) return COLORS.warning;
+  return COLORS.danger;
+}
+function isImageUrl(s) {
+  return /^https?:\/\/\S+\.(png|jpe?g|gif|webp)(\?\S*)?$/i.test(String(s || ''));
+}
+
+// ── panel (the posted, button-bearing message) ───────────────────────────────
+function panelEmbed(scope, stats) {
+  const proof = stats.count > 0
+    ? `**${EMOJI.star} ${stats.average} / 5**  ${EMOJI.dot}  ${stats.count} review${stats.count === 1 ? '' : 's'}\n\n`
+    : '';
+  const embed = baseEmbed(scope, { color: COLORS.success })
+    .setTitle('Share your experience')
+    .setDescription(
+      `${proof}We'd love to hear your thoughts — your feedback helps others and helps us improve and level up.\n\n` +
+      `${EMOJI.star}  Rate your order\n` +
+      `${EMOJI.bulb}  Tell us what stood out\n` +
+      `📸  Add proof if you want\n\n` +
+      `**Ready to share feedback?**\nTap **Leave a Vouch** below to open the review form.`,
+    );
+  const icon = scope?.guild?.iconURL?.() || scope?.iconURL?.();
+  if (icon) embed.setThumbnail(icon);
+  return embed;
+}
+function panelComponents() {
+  return [new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('vouch:leave').setLabel('Leave a Vouch').setEmoji('📝').setStyle(ButtonStyle.Success),
+  )];
+}
+
+// ── star picker + modal ──────────────────────────────────────────────────────
+function starSelectComponents() {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('vouch:stars')
+    .setPlaceholder('Rate your experience…')
+    .addOptions([5, 4, 3, 2, 1].map((n) => ({
+      label: `${n} star${n === 1 ? '' : 's'}`,
+      value: String(n),
+      emoji: '⭐',
+    })));
+  return [new ActionRowBuilder().addComponents(menu)];
+}
+function reviewModal(rating) {
+  return new ModalBuilder()
+    .setCustomId(`vouch:modal:${rating}`)
+    .setTitle(`Your review — ${rating}★`)
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('comment').setLabel('What stood out?')
+          .setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('proof').setLabel('Proof link (optional)')
+          .setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(500)
+          .setPlaceholder('https://… screenshot / receipt'),
+      ),
+    );
+}
+
+// ── posted review embed ──────────────────────────────────────────────────────
+function reviewEmbed(scope, reviewer, review) {
+  const embed = baseEmbed(scope, { color: ratingColor(review.rating) })
+    .setAuthor({ name: `New review from ${reviewer.tag}`, iconURL: reviewer.displayAvatarURL?.() })
+    .setDescription(`${renderStars(review.rating)}\n\n${review.comment || '*No comment.*'}`);
+  if (review.proof) {
+    if (isImageUrl(review.proof)) embed.setImage(review.proof);
+    else embed.addFields({ name: 'Proof', value: `[link](${review.proof})` });
+  }
+  return embed;
+}
+
+// Refresh the live panel message with the latest stats (no-op if not configured / deleted).
+async function updatePanel(guild) {
+  try {
+    const cfg = guildConfig.get(guild.id).vouch;
+    if (!cfg.panelChannelId || !cfg.panelMessageId) return;
+    const ch = guild.channels.cache.get(cfg.panelChannelId) || await guild.channels.fetch(cfg.panelChannelId).catch(() => null);
+    if (!ch) return;
+    const msg = await ch.messages.fetch(cfg.panelMessageId).catch(() => null);
+    if (!msg) return;
+    await msg.edit({ embeds: [panelEmbed(guild, store.stats(guild.id))], components: panelComponents() });
+  } catch (e) {
+    logger.error('[vouch:updatePanel]', e.message);
+  }
+}
+
+// ── interaction router ───────────────────────────────────────────────────────
+function register(client) {
+  client.on(Events.InteractionCreate, async (interaction) => {
+    try {
+      if (!interaction.guild) return;
+      const id = interaction.customId;
+      if (!id || !id.startsWith('vouch:')) return; // namespace early-return
+
+      // Open the star picker.
+      if (interaction.isButton() && id === 'vouch:leave') {
+        if (store.hasReviewed(interaction.guild.id, interaction.user.id)) {
+          return interaction.reply({ content: `${EMOJI.success} You've already left a review — thank you! 🙏`, flags: MessageFlags.Ephemeral });
+        }
+        return interaction.reply({ content: 'How many stars?', components: starSelectComponents(), flags: MessageFlags.Ephemeral });
+      }
+
+      // Star chosen → open the modal (must be the first response to this interaction).
+      if (interaction.isStringSelectMenu() && id === 'vouch:stars') {
+        const rating = parseInt(interaction.values[0], 10);
+        if (!(rating >= 1 && rating <= 5)) return;
+        return interaction.showModal(reviewModal(rating));
+      }
+
+      // Modal submitted → record + post + refresh.
+      if (interaction.isModalSubmit() && id.startsWith('vouch:modal:')) {
+        const rating = parseInt(id.slice('vouch:modal:'.length), 10);
+        const comment = interaction.fields.getTextInputValue('comment');
+        const proof = interaction.fields.getTextInputValue('proof');
+
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const res = await store.addReview(interaction.guild.id, interaction.user.id, { rating, comment, proof });
+        if (res.error) {
+          return interaction.editReply({ content: `${EMOJI.error} ${res.error}` });
+        }
+
+        const cfg = guildConfig.get(interaction.guild.id).vouch;
+        let posted = false;
+        if (cfg.channelId) {
+          const ch = interaction.guild.channels.cache.get(cfg.channelId)
+            || await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
+          if (ch && typeof ch.send === 'function') {
+            await ch.send({
+              embeds: [reviewEmbed(interaction, interaction.user, { rating, comment, proof })],
+              allowedMentions: { parse: [] },
+            }).then(() => { posted = true; }).catch(() => {});
+          }
+        }
+        await updatePanel(interaction.guild);
+
+        return interaction.editReply({
+          content: `${EMOJI.success} Thanks for your ${rating}★ review!`
+            + (posted ? ` It's now live in <#${cfg.channelId}>.` : ' (Ask an admin to set a reviews channel with `/vouches setup`.)'),
+        });
+      }
+    } catch (e) {
+      logger.error('[vouch:panel]', e.message);
+      if (interaction.isRepliable?.() && !interaction.replied && !interaction.deferred) {
+        interaction.reply({ content: `${EMOJI.warn} Something went wrong with that review.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      } else if (interaction.deferred && !interaction.replied) {
+        interaction.editReply({ content: `${EMOJI.warn} Something went wrong with that review.` }).catch(() => {});
+      }
+    }
+  });
+}
+
+module.exports = {
+  register, renderStars, ratingColor, isImageUrl,
+  panelEmbed, panelComponents, starSelectComponents, reviewModal, reviewEmbed, updatePanel,
+};
