@@ -1,7 +1,7 @@
 // src/protection/spam.js
 const { Events } = require('discord.js');
 const RateWindow = require('../core/ratewindow');
-const { isTrusted } = require('../core/whitelist');
+const { isFilterExempt } = require('../core/whitelist');
 const modlog = require('../core/modlog');
 const config = require('../../config');
 const logger = require('../core/logger');
@@ -23,7 +23,7 @@ function register(client) {
   client.on(Events.MessageCreate, async (msg) => {
     try {
       if (msg.author.bot || !msg.guild) return;
-      if (isTrusted(msg.member)) return;
+      if (isFilterExempt(msg.member)) return; // owner + admins are never filtered
 
       // Mass-mention: @everyone/@here or too many user/role pings.
       const mentionCount = msg.mentions.users.size + msg.mentions.roles.size;

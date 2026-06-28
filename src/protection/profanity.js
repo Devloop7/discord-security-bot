@@ -3,6 +3,7 @@ const { Events } = require('discord.js');
 const fs = require('node:fs');
 const path = require('node:path');
 const { containsBadWord } = require('./normalize');
+const { isFilterExempt } = require('../core/whitelist');
 const { nextTimeout } = require('../core/escalate');
 const strikes = require('../core/strikes');
 const modlog = require('../core/modlog');
@@ -16,6 +17,7 @@ function register(client) {
   client.on(Events.MessageCreate, async (msg) => {
     try {
       if (msg.author.bot || !msg.guild || !msg.content) return;
+      if (isFilterExempt(msg.member)) return; // owner + admins are never filtered
       if (!containsBadWord(msg.content, words, config.profanity.whitelist || [])) return;
       if (!actioned.claim(msg.id)) return;
 

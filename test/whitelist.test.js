@@ -11,12 +11,13 @@ const configStub = {
   link: { allowedRoles: ['mod-role'], allowedChannels: ['link-channel'], allowedDomains: [] },
 };
 require.cache[require.resolve('../config')] = { id: 'cfg', exports: configStub, loaded: true };
-const { isTrusted, canPostLinks } = require('../src/core/whitelist');
+const { isTrusted, isFilterExempt, canPostLinks } = require('../src/core/whitelist');
 
-const fakeMember = (id, ownerId, roleIds = []) => ({
+const fakeMember = (id, ownerId, roleIds = [], manageGuild = false) => ({
   id,
   guild: { ownerId },
   roles: { cache: { some: (fn) => roleIds.map((rid) => ({ id: rid })).some(fn) } },
+  permissions: { has: () => manageGuild },
 });
 
 test('isTrusted: owner and listed users are trusted, others are not', () => {
@@ -38,4 +39,12 @@ test('canPostLinks: null member is not allowed (secure default)', () => {
 
 test('isTrusted: OWNER_IDS env users are trusted', () => {
   assert.strictEqual(isTrusted(fakeMember('env-owner-id', 'someone-else')), true);
+});
+
+test('isFilterExempt: owner, OWNER_IDS, and Manage-Server admins are exempt; plain members are not', () => {
+  assert.strictEqual(isFilterExempt(fakeMember('x', 'x')), true);                         // owner
+  assert.strictEqual(isFilterExempt(fakeMember('env-owner-id', 'z')), true);              // OWNER_IDS
+  assert.strictEqual(isFilterExempt(fakeMember('admin', 'z', [], true)), true);           // Manage Server
+  assert.strictEqual(isFilterExempt(fakeMember('rando', 'z', [], false)), false);         // plain member
+  assert.strictEqual(isFilterExempt(null), false);                                        // null-safe
 });

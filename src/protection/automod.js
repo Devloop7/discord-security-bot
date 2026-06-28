@@ -17,7 +17,7 @@ const { detectContent } = require('./automodChecks');
 const actioned = require('./actioned');
 const strikes = require('../core/strikes');
 const { nextTimeout } = require('../core/escalate');
-const { isTrusted } = require('../core/whitelist');
+const { isFilterExempt } = require('../core/whitelist');
 const modlog = require('../core/modlog');
 const logger = require('../core/logger');
 
@@ -36,7 +36,7 @@ function register(client) {
   client.on(Events.MessageCreate, async (msg) => {
     try {
       if (msg.author.bot || !msg.guild || !msg.content) return;
-      if (isTrusted(msg.member)) return;
+      if (isFilterExempt(msg.member)) return; // owner + admins are never filtered
 
       const cfg = guildConfig.get(msg.guild.id).automod;
       if (cfg.ignoredChannelIds?.includes(msg.channelId)) return;

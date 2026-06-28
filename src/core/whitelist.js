@@ -1,4 +1,5 @@
 // src/core/whitelist.js
+const { PermissionFlagsBits } = require('discord.js');
 const config = require('../../config');
 
 const envOwners = (process.env.OWNER_IDS || '')
@@ -15,6 +16,15 @@ function isTrusted(member) {
   return config.trustedUsers.includes(member.id);
 }
 
+// CONTENT-FILTER exemption (profanity/links/spam/automod ONLY — never anti-nuke/raid):
+// the owner + OWNER_IDS + trustedUsers, plus anyone with Manage Server (Administrator
+// implies it). The boss and admins are never warned/filtered.
+function isFilterExempt(member) {
+  if (!member) return false;
+  if (isTrusted(member)) return true;
+  return member.permissions?.has?.(PermissionFlagsBits.ManageGuild) || false;
+}
+
 // LINK permission: trusted roles or allowed channels may post links.
 function canPostLinks(member, channelId) {
   if (config.link.allowedChannels.includes(channelId)) return true;
@@ -22,4 +32,4 @@ function canPostLinks(member, channelId) {
   return member.roles.cache.some((r) => config.link.allowedRoles.includes(r.id));
 }
 
-module.exports = { isTrusted, canPostLinks };
+module.exports = { isTrusted, isFilterExempt, canPostLinks };

@@ -52,6 +52,9 @@ const commandModules = [
   require('./invites'),
   // Phase G — permission / staff-levels
   require('./perms'),
+  // Vouch / reputation system
+  require('./vouch'),
+  require('./vouches'),
 ];
 
 const commands = new Collection();
