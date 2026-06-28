@@ -23,7 +23,11 @@ const data = new SlashCommandBuilder()
     .addChannelOption((o) => o.setName('channel').setDescription('Reviews feed channel')
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement).setRequired(true)))
   .addSubcommand((s) => s.setName('remove').setDescription("Remove a member's review (staff)")
-    .addUserOption((o) => o.setName('user').setDescription('Whose review to remove').setRequired(true)));
+    .addUserOption((o) => o.setName('user').setDescription('Whose review to remove').setRequired(true)))
+  .addSubcommand((s) => s.setName('branding').setDescription('Set the vouch banner, logo & thank-you footer (staff)')
+    .addStringOption((o) => o.setName('banner').setDescription('Big image URL on each vouch — or "none" to clear'))
+    .addStringOption((o) => o.setName('thumbnail').setDescription('Logo URL (top-right); defaults to server icon — or "none"'))
+    .addStringOption((o) => o.setName('footer').setDescription('Footer text; {server} = server name — or "none"')));
 
 // A 10-cell proportional bar for the star breakdown.
 function bar(n, max) {
@@ -97,6 +101,34 @@ async function execute(interaction) {
           : `${EMOJI.warn} ${user} hasn't left a review.`,
         flags: eph,
       });
+    }
+
+    if (sub === 'branding') {
+      if (!isStaff(interaction.member, gid)) {
+        return interaction.reply({ content: `${EMOJI.error} You need Manage Server to change vouch branding.`, flags: eph });
+      }
+      const banner = interaction.options.getString('banner');
+      const thumbnail = interaction.options.getString('thumbnail');
+      const footer = interaction.options.getString('footer');
+      if (banner === null && thumbnail === null && footer === null) {
+        return interaction.reply({ content: `${EMOJI.warn} Provide at least one of: banner, thumbnail, footer.`, flags: eph });
+      }
+      const isUrl = (s) => /^https?:\/\/\S+$/i.test(s);
+      const clean = (s) => (s && s.trim().toLowerCase() === 'none' ? null : s);
+      const patch = {};
+      if (banner !== null) {
+        const b = clean(banner);
+        if (b && !isUrl(b)) return interaction.reply({ content: `${EMOJI.error} Banner must be an http(s) image URL (or "none").`, flags: eph });
+        patch.bannerUrl = b;
+      }
+      if (thumbnail !== null) {
+        const t = clean(thumbnail);
+        if (t && !isUrl(t)) return interaction.reply({ content: `${EMOJI.error} Thumbnail must be an http(s) image URL (or "none").`, flags: eph });
+        patch.thumbnailUrl = t;
+      }
+      if (footer !== null) patch.footerText = clean(footer);
+      guildConfig.set(gid, { vouch: patch });
+      return interaction.reply({ content: `${EMOJI.success} Vouch branding updated. Preview it with \`/vouch\`.`, flags: eph });
     }
   } catch (e) {
     logger.error('[vouches]', e.message);

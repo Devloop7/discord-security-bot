@@ -9,12 +9,12 @@
 'use strict';
 
 const {
-  Events, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  Events, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags,
 } = require('discord.js');
 const store = require('./store');
 const guildConfig = require('../core/guildConfig');
-const { baseEmbed, COLORS, EMOJI } = require('../ui/theme');
+const { baseEmbed, brandIcon, COLORS, EMOJI } = require('../ui/theme');
 const logger = require('../core/logger');
 
 // ── small renderers ──────────────────────────────────────────────────────────
@@ -85,15 +85,41 @@ function reviewModal(rating) {
     );
 }
 
-// ── posted review embed ──────────────────────────────────────────────────────
+// ── posted review embed (rich, premium — matches a top-tier vouch bot) ───────
 function reviewEmbed(scope, reviewer, review) {
-  const embed = baseEmbed(scope, { color: ratingColor(review.rating) })
-    .setAuthor({ name: `New review from ${reviewer.tag}`, iconURL: reviewer.displayAvatarURL?.() })
-    .setDescription(`${renderStars(review.rating)}\n\n${review.comment || '*No comment.*'}`);
-  if (review.proof) {
-    if (isImageUrl(review.proof)) embed.setImage(review.proof);
-    else embed.addFields({ name: 'Proof', value: `[link](${review.proof})` });
+  const cfg = guildConfig.get(scope.guild.id).vouch;
+  const ts = review.ts || Date.now();
+
+  const embed = new EmbedBuilder()
+    .setColor(ratingColor(review.rating))
+    .setTitle('New Vouch Received 🎉')
+    .addFields(
+      { name: 'Vouch ID', value: `\`Nº ${review.id ?? '—'}\``, inline: false },
+      { name: 'Rating', value: '⭐'.repeat(review.rating), inline: false },
+      { name: 'Feedback', value: review.comment ? String(review.comment).slice(0, 1024) : '*No feedback given.*', inline: false },
+      { name: 'Vouched By', value: `<@${reviewer.id}>`, inline: true },
+      { name: 'Vouched At', value: `<t:${Math.floor(ts / 1000)}:R>`, inline: true },
+    )
+    .setTimestamp(ts);
+
+  // Thumbnail (top-right): configured logo, else the server icon.
+  const thumb = cfg.thumbnailUrl || scope.guild.iconURL?.({ size: 256 });
+  if (thumb) embed.setThumbnail(thumb);
+
+  // Big image: a configured shop banner wins; otherwise an image proof.
+  let bigImage = null;
+  if (cfg.bannerUrl) bigImage = cfg.bannerUrl;
+  else if (isImageUrl(review.proof)) bigImage = review.proof;
+  if (bigImage) embed.setImage(bigImage);
+  // Keep proof reachable if it wasn't shown as the main image.
+  if (review.proof && bigImage !== review.proof) {
+    embed.addFields({ name: 'Proof', value: `[view](${review.proof})`, inline: false });
   }
+
+  // Footer: a custom thank-you ({server} supported) + the bot's icon.
+  const thankYou = (cfg.footerText || 'Thanks for supporting {server} 💜').replace(/\{server\}/g, scope.guild.name);
+  const icon = brandIcon(scope);
+  embed.setFooter(icon ? { text: thankYou, iconURL: icon } : { text: thankYou });
   return embed;
 }
 
@@ -142,7 +168,8 @@ function register(client) {
         const proof = interaction.fields.getTextInputValue('proof');
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const res = await store.addReview(interaction.guild.id, interaction.user.id, { rating, comment, proof });
+        const now = Date.now();
+        const res = await store.addReview(interaction.guild.id, interaction.user.id, { rating, comment, proof }, now);
         if (res.error) {
           return interaction.editReply({ content: `${EMOJI.error} ${res.error}` });
         }
@@ -154,7 +181,7 @@ function register(client) {
             || await interaction.guild.channels.fetch(cfg.channelId).catch(() => null);
           if (ch && typeof ch.send === 'function') {
             await ch.send({
-              embeds: [reviewEmbed(interaction, interaction.user, { rating, comment, proof })],
+              embeds: [reviewEmbed(interaction, interaction.user, { id: res.id, rating, comment, proof, ts: now })],
               allowedMentions: { parse: [] },
             }).then(() => { posted = true; }).catch(() => {});
           }
