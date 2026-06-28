@@ -35,7 +35,16 @@ function distOf(list) {
 }
 
 // ── queries ──────────────────────────────────────────────────────────────────
-function hasReviewed(guildId, fromId) { return listFor(guildId).some((r) => r.from === fromId); }
+// Timestamp of a member's most recent review (0 if they've never reviewed).
+function lastReviewTs(guildId, fromId) {
+  return listFor(guildId).reduce((m, r) => (r.from === fromId && r.ts > m ? r.ts : m), 0);
+}
+// Milliseconds until this member may review again (0 = allowed now).
+function cooldownRemaining(guildId, fromId, cooldownMs, now = Date.now()) {
+  if (!cooldownMs || cooldownMs <= 0) return 0;
+  const last = lastReviewTs(guildId, fromId);
+  return last ? Math.max(0, cooldownMs - (now - last)) : 0;
+}
 function count(guildId) { return listFor(guildId).length; }
 function average(guildId) { return avgOf(listFor(guildId)); }
 function distribution(guildId) { return distOf(listFor(guildId)); }
@@ -47,18 +56,21 @@ function stats(guildId) {
   return { count: list.length, average: avgOf(list), distribution: distOf(list) };
 }
 
-// ── mutations (async; one-per-person enforced inside the serialized write) ───
-// Returns { ok, id, count, average } or { error }.
-async function addReview(guildId, fromId, { rating, comment, proof }, ts = Date.now()) {
+// ── mutations (async; per-member cooldown enforced inside the serialized write) ─
+// Returns { ok, id, count, average } or { error, retryAt? }.
+async function addReview(guildId, fromId, { rating, comment, proof }, cooldownMs = 0, ts = Date.now()) {
   const r = Number(rating);
   if (!Number.isInteger(r) || r < 1 || r > 5) return { error: 'Rating must be between 1 and 5 stars.' };
   let result;
   await store.mutate(FILE, (data) => {
     const g = norm(data[guildId]);
-    if (g.list.some((x) => x.from === fromId)) {
-      data[guildId] = g; // persist the normalized shape even on rejection (cheap migration)
-      result = { error: 'You have already left a review.' };
-      return;
+    if (cooldownMs > 0) {
+      const last = g.list.reduce((m, x) => (x.from === fromId && x.ts > m ? x.ts : m), 0);
+      if (last && ts - last < cooldownMs) {
+        data[guildId] = g; // persist the normalized shape even on rejection
+        result = { error: 'cooldown', retryAt: last + cooldownMs };
+        return;
+      }
     }
     g.seq += 1;
     g.list.push({
@@ -91,6 +103,6 @@ async function removeReview(guildId, fromId) {
 
 module.exports = {
   FILE, avgOf, distOf,
-  hasReviewed, count, average, distribution, recent, stats,
+  lastReviewTs, cooldownRemaining, count, average, distribution, recent, stats,
   addReview, removeReview,
 };

@@ -5,8 +5,11 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const store = require('../vouch/store');
 const { starSelectComponents } = require('../vouch/panel');
+const guildConfig = require('../core/guildConfig');
 const { EMOJI } = require('../ui/theme');
 const logger = require('../core/logger');
+
+const DAY_MS = 86400000;
 
 const data = new SlashCommandBuilder()
   .setName('vouch')
@@ -14,9 +17,12 @@ const data = new SlashCommandBuilder()
 
 async function execute(interaction) {
   try {
-    if (store.hasReviewed(interaction.guildId, interaction.user.id)) {
+    const cfg = guildConfig.get(interaction.guildId).vouch;
+    const remain = store.cooldownRemaining(interaction.guildId, interaction.user.id, (cfg.cooldownDays || 0) * DAY_MS);
+    if (remain > 0) {
+      const when = Math.floor((Date.now() + remain) / 1000);
       return interaction.reply({
-        content: `${EMOJI.success} You've already left a review — thank you! 🙏`,
+        content: `⏳ You can leave another vouch <t:${when}:R>.`,
         flags: MessageFlags.Ephemeral,
       });
     }

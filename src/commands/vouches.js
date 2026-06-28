@@ -27,7 +27,9 @@ const data = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName('branding').setDescription('Set the vouch banner, logo & thank-you footer (staff)')
     .addStringOption((o) => o.setName('banner').setDescription('Big image URL on each vouch — or "none" to clear'))
     .addStringOption((o) => o.setName('thumbnail').setDescription('Logo URL (top-right); defaults to server icon — or "none"'))
-    .addStringOption((o) => o.setName('footer').setDescription('Footer text; {server} = server name — or "none"')));
+    .addStringOption((o) => o.setName('footer').setDescription('Footer text; {server} = server name — or "none"')))
+  .addSubcommand((s) => s.setName('cooldown').setDescription('Days a member must wait between vouches (staff)')
+    .addIntegerOption((o) => o.setName('days').setDescription('0 = no limit; default 3').setRequired(true).setMinValue(0).setMaxValue(365)));
 
 // A 10-cell proportional bar for the star breakdown.
 function bar(n, max) {
@@ -129,6 +131,20 @@ async function execute(interaction) {
       if (footer !== null) patch.footerText = clean(footer);
       guildConfig.set(gid, { vouch: patch });
       return interaction.reply({ content: `${EMOJI.success} Vouch branding updated. Preview it with \`/vouch\`.`, flags: eph });
+    }
+
+    if (sub === 'cooldown') {
+      if (!isStaff(interaction.member, gid)) {
+        return interaction.reply({ content: `${EMOJI.error} You need Manage Server to change the cooldown.`, flags: eph });
+      }
+      const days = interaction.options.getInteger('days');
+      guildConfig.set(gid, { vouch: { cooldownDays: days } });
+      return interaction.reply({
+        content: days === 0
+          ? `${EMOJI.success} Cooldown removed — members can vouch anytime.`
+          : `${EMOJI.success} Members can now leave a vouch once every **${days}** day${days === 1 ? '' : 's'}.`,
+        flags: eph,
+      });
     }
   } catch (e) {
     logger.error('[vouches]', e.message);

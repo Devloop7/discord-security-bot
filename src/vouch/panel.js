@@ -17,6 +17,8 @@ const guildConfig = require('../core/guildConfig');
 const { baseEmbed, brandIcon, COLORS, EMOJI } = require('../ui/theme');
 const logger = require('../core/logger');
 
+const DAY_MS = 86400000;
+
 // ── small renderers ──────────────────────────────────────────────────────────
 function renderStars(rating) {
   const r = Math.max(0, Math.min(5, Number(rating) || 0));
@@ -146,10 +148,13 @@ function register(client) {
       const id = interaction.customId;
       if (!id || !id.startsWith('vouch:')) return; // namespace early-return
 
-      // Open the star picker.
+      // Open the star picker (unless the member is still on cooldown).
       if (interaction.isButton() && id === 'vouch:leave') {
-        if (store.hasReviewed(interaction.guild.id, interaction.user.id)) {
-          return interaction.reply({ content: `${EMOJI.success} You've already left a review — thank you! 🙏`, flags: MessageFlags.Ephemeral });
+        const cfg = guildConfig.get(interaction.guild.id).vouch;
+        const remain = store.cooldownRemaining(interaction.guild.id, interaction.user.id, (cfg.cooldownDays || 0) * DAY_MS);
+        if (remain > 0) {
+          const when = Math.floor((Date.now() + remain) / 1000);
+          return interaction.reply({ content: `⏳ You can leave another vouch <t:${when}:R>.`, flags: MessageFlags.Ephemeral });
         }
         return interaction.reply({ content: 'How many stars?', components: starSelectComponents(), flags: MessageFlags.Ephemeral });
       }
@@ -169,12 +174,16 @@ function register(client) {
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const now = Date.now();
-        const res = await store.addReview(interaction.guild.id, interaction.user.id, { rating, comment, proof }, now);
+        const cfg = guildConfig.get(interaction.guild.id).vouch;
+        const res = await store.addReview(interaction.guild.id, interaction.user.id, { rating, comment, proof }, (cfg.cooldownDays || 0) * DAY_MS, now);
         if (res.error) {
-          return interaction.editReply({ content: `${EMOJI.error} ${res.error}` });
+          return interaction.editReply({
+            content: res.retryAt
+              ? `${EMOJI.error} You can leave another vouch <t:${Math.floor(res.retryAt / 1000)}:R>.`
+              : `${EMOJI.error} ${res.error}`,
+          });
         }
 
-        const cfg = guildConfig.get(interaction.guild.id).vouch;
         let posted = false;
         if (cfg.channelId) {
           const ch = interaction.guild.channels.cache.get(cfg.channelId)

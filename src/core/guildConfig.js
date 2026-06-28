@@ -26,6 +26,7 @@ const DEFAULTS = {
   vouch: {
     channelId: null, panelChannelId: null, panelMessageId: null,
     bannerUrl: null, thumbnailUrl: null, footerText: null,
+    cooldownDays: 3, // a member may leave another vouch every N days (0 = no limit)
   },
 };
 
